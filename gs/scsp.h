@@ -1,7 +1,7 @@
 /*
  * gs/scsp.h
  *
- * Copyright (C) 2021 celeriyacon - https://github.com/celeriyacon
+ * Copyright (C) 2021-2024 celeriyacon - https://github.com/celeriyacon
  *
  * This software is provided 'as-is', without any express or implied
  * warranty.  In no event will the authors be held liable for any damages
