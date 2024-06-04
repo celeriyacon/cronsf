@@ -1,0 +1,6 @@
+FILE "cronsf-track1.iso" BINARY
+ TRACK 01 MODE1/2048
+  INDEX 01 00:00:00
+FILE "cronsf-track2-nsfs.iso" BINARY
+ TRACK 02 MODE1/2048
+  INDEX 01 00:00:00

@@ -1,0 +1,17 @@
+*.o
+*.bin
+*.bin.inc
+*.bin.h
+*.elf
+*.ss
+*.iso
+*.dis
+*.zip
+/gentables
+/bintoinc
+/madrs*.h
+/nsfs/*
+!/nsfs/Tests
+!/font.bin
+!/sec_cart.bin
+!/sec_cd.bin
