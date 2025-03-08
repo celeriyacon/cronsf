@@ -1,5 +1,5 @@
 /*
- * apu.h
+ * vrc6.h
  *
  * Copyright (C) 2024 celeriyacon - https://github.com/celeriyacon
  *
@@ -21,24 +21,9 @@
  *
  */
 
-#ifndef CRONSF_APU_H
-#define CRONSF_APU_H
+#ifndef CRONSF_VRC6_H
+#define CRONSF_VRC6_H
 
-COLD_SECTION void apu_preinit(void);
-COLD_SECTION void apu_init(bool pal, uint32 apu_volume);	// apu_volume <= 65536, 65536 = 1.000...
-COLD_SECTION void apu_kill(void);
-COLD_SECTION void apu_power(void);
-
-COLD_SECTION uint32 apu_get_timestamp_scale(void);
-COLD_SECTION volatile int16* apu_get_exchip_buffer(void);
-
-void apu_start_sync(void);
-void apu_write(uint32 timestamp, uint16 addr, uint8 value);
-uint8 apu_read_4015(uint32 timestamp, uint16 addr, uint32 raw_data_bus_in);
-void apu_force_update(uint32 timestamp);
-void apu_frame(uint32 timestamp);
-
-//void apu_pause(void);
-//void apu_unpause(void);
+void vrc6_slave_entry(uint32 timestamp_scale, volatile uint16* exchip_buffer, uint32 ref_volume);
 
 #endif

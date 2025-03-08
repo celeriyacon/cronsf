@@ -1,7 +1,7 @@
 /*
  * fsys.c
  *
- * Copyright (C) 2024 celeriyacon - https://github.com/celeriyacon
+ * Copyright (C) 2024-2025 celeriyacon - https://github.com/celeriyacon
  *
  * This software is provided 'as-is', without any express or implied
  * warranty.  In no event will the authors be held liable for any damages
@@ -34,8 +34,8 @@
 #include <string.h>
 #include <ctype.h>
 
-enum { max_dir_entries_lo = 3912 };
-enum { max_dir_entries_hi = 2849 };
+enum { max_dir_entries_lo = 1691 };
+enum { max_dir_entries_hi = 3725 };
 enum { max_dir_entries = max_dir_entries_lo + max_dir_entries_hi };
 
 LORAM_BSS static fsys_dir_entry_t dir_entries_lo[max_dir_entries_lo];
@@ -47,6 +47,68 @@ static uint32 current_dir_size;
 static uint32 file_list_count;
 static uint32 dir_list_count;
 static int32 iso_base_fad;
+
+static const char* fsys_error;
+
+const char* fsys_get_error(void)
+{
+ return fsys_error;
+}
+
+static const uint8* ms_base;
+static uint32 ms_size;
+static int32 ms_pos;
+
+static int mem_stream_seek(int32 offset, int whence)
+{
+ int64 new_pos = ms_pos;
+
+ switch(whence)
+ {
+  case SEEK_CUR:
+	new_pos = (int64)ms_pos + offset;
+	break;
+
+  case SEEK_SET:
+	new_pos = offset;
+	break;
+
+  case SEEK_END:
+	new_pos = (int64)ms_size + offset;
+	break;
+ }
+
+ if(new_pos < 0 || (int32)new_pos != new_pos)
+  return -1;
+
+ ms_pos = new_pos;
+
+ return 0;
+}
+
+static int32 mem_stream_tell(void)
+{
+ return ms_pos;
+}
+
+static int mem_stream_read(void* dest, uint32 n)
+{
+ if(ms_pos >= ms_size)
+  n = 0;
+ else if(n > (ms_size - ms_pos))
+  n = ms_size - ms_pos;
+
+ memcpy(dest, ms_base + ms_pos, n);
+ ms_pos += n;
+
+ return n;
+}
+
+static int (*stream_seek)(int32 offset, int whence);
+static int32 (*stream_tell)(void);
+static int (*stream_read)(void* dest, uint32 n);
+
+
 
 static fsys_dir_entry_t* get_dir_entry_(unsigned index)
 {
@@ -63,6 +125,7 @@ fsys_dir_entry_t* fsys_get_dir_entry(unsigned index)
 
 static bool read_iso_directory(uint32 lba, uint32 dir_size, fsys_filter_t filter)
 {
+ bool ret = true;
  const uint32 rdoffs = (iso_base_fad + lba) * 2048;
  uint8 dr[256];
 
@@ -72,17 +135,17 @@ static bool read_iso_directory(uint32 lba, uint32 dir_size, fsys_filter_t filter
  current_dir_lba = lba;
  current_dir_size = dir_size;
 
- cdb_stream_seek(rdoffs, SEEK_SET);
+ stream_seek(rdoffs, SEEK_SET);
 
- while(cdb_stream_tell() < (rdoffs + dir_size))
+ while(stream_tell() < (rdoffs + dir_size))
  {
-  cdb_stream_read(dr, 1);
+  stream_read(dr, 1);
 
   if(!dr[0])
    continue;
   //
-  cdb_stream_read(dr + 1, dr[0] - 1);
-  cdb_stream_seek(dr[1], SEEK_CUR);
+  stream_read(dr + 1, dr[0] - 1);
+  stream_seek(dr[1], SEEK_CUR);
   //
   const uint32 file_lba = read32_le(dr + 0x02);
   const uint32 file_size = read32_le(dr + 0x0A);
@@ -118,7 +181,9 @@ static bool read_iso_directory(uint32 lba, uint32 dir_size, fsys_filter_t filter
 
     if(total_list_count >= max_dir_entries)
     {
-     printf("Too many directory entries, dropping: %s\n", file_name);
+     fsys_error = "Too many directory entries.";
+     ret = false;
+     break;
     }
     else
     {
@@ -145,7 +210,12 @@ static bool read_iso_directory(uint32 lba, uint32 dir_size, fsys_filter_t filter
   }
  }
 
- return true;
+ return ret;
+}
+
+bool fsys_change_dir_de(const fsys_dir_entry_t* de, fsys_filter_t filter)
+{
+ return read_iso_directory(de->lba, de->size, filter);
 }
 
 bool fsys_change_dir(unsigned index, fsys_filter_t filter)
@@ -169,22 +239,43 @@ bool fsys_restore_cur_dir(uint32 lba, uint32 size, fsys_filter_t filter)
 }
 
 
-bool fsys_init(const unsigned track, fsys_filter_t filter)
+bool fsys_init(const unsigned track, uint8* mem_base, uint32 mem_size, fsys_filter_t filter)
 {
  uint8 vdheader[8];
  uint32 pvd_offset = 0;
  uint32 evd_offset = 0;
 
- iso_base_fad = cdb_get_track_fad(track);
+ fsys_error = NULL;
 
- printf("Track %u fad=0x%06x\n", track, iso_base_fad);
+ if(mem_base)
+ {
+  stream_seek = mem_stream_seek;
+  stream_tell = mem_stream_tell;
+  stream_read = mem_stream_read;
 
+  ms_base = mem_base;
+  ms_size = mem_size;
+  ms_pos = 0;
+
+  iso_base_fad = 0;
+ }
+ else
+ {
+  stream_seek = cdb_stream_seek;
+  stream_tell = cdb_stream_tell;
+  stream_read = cdb_stream_read;
+
+  iso_base_fad = cdb_get_track_fad(track);
+  printf("Track %u fad=0x%06x\n", track, iso_base_fad);
+ }
+ //
+ //
  for(unsigned i = 0; i < 256; i++)
  {
   const uint32 offs = iso_base_fad * 2048 + 0x8000 + (i * 0x800);
 
-  cdb_stream_seek(offs, SEEK_SET);
-  cdb_stream_read(vdheader, sizeof(vdheader));
+  stream_seek(offs, SEEK_SET);
+  stream_read(vdheader, sizeof(vdheader));
 
   if(!memcmp(vdheader + 1, "CD001", 5))
   {
@@ -205,6 +296,7 @@ bool fsys_init(const unsigned track, fsys_filter_t filter)
  //
  if(!pvd_offset && !evd_offset)
  {
+  fsys_error = "Missing PVD/EVD.";
   return false;
  }
  else
@@ -214,10 +306,10 @@ bool fsys_init(const unsigned track, fsys_filter_t filter)
 
   printf("%08x\n", Xvd_offset);
 
-  cdb_stream_seek(Xvd_offset, SEEK_SET);
+  stream_seek(Xvd_offset, SEEK_SET);
 
-  cdb_stream_seek(156, SEEK_CUR);
-  cdb_stream_read(dr, 34);
+  stream_seek(156, SEEK_CUR);
+  stream_read(dr, 34);
 
   const uint32 root_dir_lba = read32_le(dr + 0x02);
   const uint32 root_dir_len = read32_le(dr + 0x0A);
@@ -225,11 +317,8 @@ bool fsys_init(const unsigned track, fsys_filter_t filter)
   printf("root_dir_lba=%u\n", root_dir_lba);
   printf("root_dir_len=%u\n", root_dir_len);
 
-  if(!read_iso_directory(root_dir_lba, root_dir_len, filter))
-   return false;
+  return read_iso_directory(root_dir_lba, root_dir_len, filter);
  }
-
- return true;
 }
 
 unsigned fsys_num_dir_entries(void)
@@ -259,9 +348,12 @@ bool fsys_open_de(fsys_dir_entry_t* de)
  opf = de;
 
  if(!opf)
+ {
+  fsys_error = "NULL pointer.";
   return false;
+ }
 
- cdb_stream_seek((iso_base_fad + opf->lba) * 2048, SEEK_SET);
+ stream_seek((iso_base_fad + opf->lba) * 2048, SEEK_SET);
 
  return true;
 }
@@ -275,7 +367,7 @@ ssize_t fsys_read(void* ptr, size_t count)
 {
  const int32 csfstart = (iso_base_fad + opf->lba) * 2048;
  const int32 csfbound = csfstart + opf->size;
- const int32 cspos = cdb_stream_tell();
+ const int32 cspos = stream_tell();
 
  assert(cspos >= csfstart);
 
@@ -285,7 +377,10 @@ ssize_t fsys_read(void* ptr, size_t count)
  if(count > (csfbound - cspos))
   count = csfbound - cspos;
 
- int32 rv = cdb_stream_read(ptr, count);
+ int32 rv = stream_read(ptr, count);
+
+ if(rv < 0)
+  fsys_error = "CDB error.";
 
  return rv;
 }
@@ -293,7 +388,7 @@ ssize_t fsys_read(void* ptr, size_t count)
 int32 fsys_tell(void)
 {
  const int32 csfstart = (iso_base_fad + opf->lba) * 2048;
- const int32 cspos = cdb_stream_tell();
+ const int32 cspos = stream_tell();
 
  assert(cspos >= csfstart);
 
@@ -307,7 +402,7 @@ int fsys_seek(int32 new_position)
  if(new_position < 0)
   return -1;
 
- return cdb_stream_seek(csfstart + new_position, SEEK_SET);
+ return stream_seek(csfstart + new_position, SEEK_SET);
 }
 
 int32 fsys_size(void)

@@ -42,10 +42,13 @@ typedef struct fsys_dir_entry_t_
 // Return false to discard.
 typedef bool (*fsys_filter_t)(const char* file_name, uint16* file_type);
 
-bool fsys_init(const unsigned track, fsys_filter_t filter);
+bool fsys_init(const unsigned track, uint8* mem_base, uint32 mem_size, fsys_filter_t filter);
+bool fsys_change_dir_de(const fsys_dir_entry_t* de, fsys_filter_t filter);
 bool fsys_change_dir(unsigned index, fsys_filter_t filter);
-bool fsys_save_cur_dir(uint32* lba, uint32* size);
 bool fsys_restore_cur_dir(uint32 lba, uint32 size, fsys_filter_t filter);
+bool fsys_save_cur_dir(uint32* lba, uint32* size);
+
+const char* fsys_get_error(void);
 
 unsigned fsys_num_dir_entries(void);
 fsys_dir_entry_t* fsys_get_dir_entry(unsigned index);

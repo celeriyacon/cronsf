@@ -33,12 +33,24 @@ void scsp_init(void)
 
  SCSP(0x100400) = (1 << 9);
 
+ scsp_wait_full_samples(4);
+
+ for(unsigned slot = 0; slot < 32; slot++)
+ {
+  SCSP_SREG(slot, 0x00) = 0x0800;
+  SCSP_SREG(slot, 0x08) = 0x0000;
+  SCSP_SREG(slot, 0x0A) = 0x001F;
+  SCSP_SREG(slot, 0x10) = 0x0400;
+ }
+ SCSP_SREG(0, 0x00) |= 1 << 12;
+
+ scsp_wait_full_samples(4);
+
  for(unsigned slot = 0; slot < 32; slot++)
  {
   SCSP_SREG(slot, 0x00) = 0x0000;
-  SCSP_SREG(slot, 0x0A) = 0x001F;
  }
- SCSP_SREG(0, 0x00) = 1 << 12;
+ SCSP_SREG(0, 0x00) |= 1 << 12;
 
  scsp_wait_full_samples(256);
 
@@ -48,7 +60,12 @@ void scsp_init(void)
    SCSP(i) = 0;
 
   for(uint32 i = 0x100402; i < 0x101000; i += 2)
-   SCSP(i) = 0;
+  {
+   if(i != 0x100406)
+   {
+    SCSP(i) = 0;
+   }
+  }
 
   scsp_wait_full_samples(256);
  }

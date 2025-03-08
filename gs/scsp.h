@@ -97,7 +97,11 @@ static volatile uint32* const MIXS = (volatile uint32*)SCSPVP(0x100E80);	//  16
 static volatile uint16* const EFREG = (volatile uint16*)SCSPVP(0x100EC0);	//  16
 
 #define DSP_MAKE_MEMS(v) (((uint32)((v) & 0xFF) << 16) | (((v) >> 8) & 0xFFFF))
+#define DSP_MAKE_TEMP(v) (((uint32)((v) & 0xFF) << 16) | (((v) >> 8) & 0xFFFF))
 #define DSP_MAKE_MIXS(v) (((uint32)((v) & 0x0F) << 16) | (((v) >> 4) & 0xFFFF))
 #define DSP_MAKE_COEF(v) ((v) << 3)
+
+#define DSP_UNMAKE_MEMS(v) ((((v) >> 16) & 0xFF) | (((v) & 0xFFFF) << 8))
+#define DSP_UNMAKE_TEMP(v) ((((v) >> 16) & 0xFF) | (((v) & 0xFFFF) << 8))
 
 #endif

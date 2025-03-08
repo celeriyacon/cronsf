@@ -94,8 +94,10 @@ rtable:
 	.word test_sweep_silence
 	.word test_sweep_nosilence
 	.word test_relative_volume
+	.word test_noise
 	.word test_dsp_duty_volume_sync
 	.word test_dsp_volume_phres_sync
+	.word test_dsp_volume_pcm_sync
 	.word test_dmc_host_cpu
 	;.word test_MAX_POWER_AHAHAHAHA
 rtable_bound:
@@ -123,8 +125,7 @@ test_dsp_duty_volume_sync:
 test_dsp_duty_volume_sync_loop:
 	sta $4000
 	clc
-	adc #$40
-	eor #$08
+	eor #$CF
 
 	jsr delay_quick
 	dex
@@ -158,6 +159,40 @@ test_dsp_volume_phres_sync_loop:
 	rts
 
 
+test_dsp_volume_pcm_sync:
+	lda #$01
+	sta $4015
+
+	lda #$BF
+	sta $4000
+
+	lda #$80
+	sta $4001
+
+	lda #$FF
+	sta $4002
+
+	lda #$03
+	sta $4003
+
+	lda #$00
+tdvps_loop:
+	eor #$7F
+	pha
+	and #$0F
+	ora #$B0
+	tay
+	pla
+	sta $4011
+	sty $4000
+
+	ldx #$00
+tdvps_delay:
+	dex
+	bne tdvps_delay
+	jmp tdvps_loop
+
+	rts
 
 sweep_testvals:
 	.byte $80 | $00 | $71
@@ -958,8 +993,10 @@ chunk_tlbl:
 .aasc "test_sweep_silence", $0
 .aasc "test_sweep_nosilence", $0
 .aasc "test_relative_volume", $0
+.aasc "test_noise", $0
 .aasc "test_dsp_duty_volume_sync", $0
 .aasc "test_dsp_volume_phres_sync", $0
+.aasc "test_dsp_volume_pcm_sync", $0
 .aasc "test_dmc_host_cpu", $0
 ;.aasc "test_MAX_POWER_AHAHAHAHA", $0
 chunk_tlbl_bound:

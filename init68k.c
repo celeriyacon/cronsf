@@ -38,19 +38,29 @@ void _start(void)
 	"jmp %%a7@\n\t"
 
 	"1:\n\t"
-	"move.w #0xDEAD, %0@\n\t"
-	"move.w #0xBEEF, %1@\n\t"
-	"move.w #0xCAFE, %2@\n\t"
-	"move.w #0xBABE, %3@\n\t"
-	"move.w #0xD00D, %4@\n\t"
-	"move.l #0xFEEDF00D, %5@\n\t"
+	// Pulse0
+	"move.w #0xDEAD, %%d0\n\t"
+	"move.w %%d0, %0@\n\t"
+	"move.w %%d0, %1@\n\t"
+
+	// Pulse1
+	"move.w #0xBEEF, %%d0\n\t"
+	"move.w %%d0, %2@\n\t"
+	"move.w %%d0, %3@\n\t"
+
+	// Triangle
+	"move.w #0xF00D, %4@\n\t"
+
+	// Noise
+	"move.l #0xCAFEBABE, %5@\n\t"
+
 	"jmp %%a7@\n\t"
 
 	:
-	: "a"(&SCSP_SREG(13 + 0, 0x02)), "a"(&SCSP_SREG(13 + 1, 0x02)),	// Pulse0
-	  "a"(&SCSP_SREG(13 + 2, 0x02)), "a"(&SCSP_SREG(13 + 3, 0x02)),	// Pulse1
-	  "a"(&SCSP_SREG(18, 0x02)),	// Triangle
-	  "a"(&SCSP_SREG(17, 0x00)), // Noise
+	: "a"(&SCSP_SREG(10 + 0, 0x02)), "a"(&SCSP_SREG(10 + 1, 0x02)),	// Pulse0
+	  "a"(&SCSP_SREG(10 + 2, 0x02)), "a"(&SCSP_SREG(10 + 3, 0x02)),	// Pulse1
+	  "a"(&SCSP_SREG(14, 0x02)),	// Triangle
+	  "a"(&SCSP_SREG(15, 0x00)), // Noise
 	  "d"(EFREG)	// Jump target
 	: "memory", "cc");
 }

@@ -133,6 +133,20 @@ static INLINE void sh2_set_sr(uint32 value)
  asm volatile("ldc %0,SR\n\tnop\n\t" : :"r"(value) : "memory");
 }
 
+static INLINE void sh2_set_sr_s(bool value)
+{
+ unsigned tmp = 0;
+
+ asm volatile(
+	"stc SR, %0\n\t"
+	"and %2, %0\n\t"
+	"or %1, %0\n\t"
+	"ldc %0, SR\n\t"
+	: "=&r"(tmp)
+	: "r"(value << 1), "r"(~2)
+	: "memory");
+}
+
 // Only reliable when interrupts are disabled.
 static INLINE void sh2_wait_approx(uint32 cycles)
 {

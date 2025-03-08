@@ -1,7 +1,7 @@
 /*
  * gentables.cpp
  *
- * Copyright (C) 2024 celeriyacon - https://github.com/celeriyacon
+ * Copyright (C) 2024-2025 celeriyacon - https://github.com/celeriyacon
  *
  * This software is provided 'as-is', without any express or implied
  * warranty.  In no event will the authors be held liable for any damages
@@ -71,7 +71,7 @@ static double apu_freq;
 static uint32 time_scale_ntsc;
 static uint32 time_scale_pal;
 
-static int8 saw_waveform[SAW_FBIN_COUNT][1024];
+static int16 saw_waveform[SAW_FBIN_COUNT][1024];
 static int8 tri_waveform[TRI_FBIN_COUNT][2048];
 
 static int8 sn_waveform[16 * SN_VARIANT_COUNT][1024];
@@ -408,35 +408,44 @@ static void lookup_table(void)
  //
  static uint8 lump[524288];
  int32 offs = 0;
+ static uint8 dsp_lump[131072];
+ enum : int32 { dsp_lump_size = 52 * 1024 };
+ int32 dsp_lump_offs = 0;
+ int32 dsp_lump_base = 0;
  FILE* fp;
  //
  //
  const double volume_scale = 5424; //256 * 15;
 
  memset(lump, 0, sizeof(lump));
+ memset(dsp_lump, 0, sizeof(dsp_lump));
 
- fp = fopen(pal ? "madrs-pal.h" : "madrs.h", "wb");
+ fp = fopen(pal ? "madrs_pal.h" : "madrs.h", "wb");
  assert(fp);
 
+ //
+ {
+  for(int j = 0; j < 65536; j += 2)
+  {
+   lump[offs] = ln_waveform[0][j];
+   offs++;
+  }
+
+  for(int j = 0; j < 65536; j += 2)
+  {
+   lump[offs] = ln_waveform[LN_FBIN_COUNT - 1][j];
+   offs++;
+  }
+ }
+
  // Long noise samples need to be aligned to 65536-byte boundaries.
- for(int i = LN_FBIN_COUNT - 1; i >= 0; i--)
+ for(int i = 1; i < (LN_FBIN_COUNT - 1); i++)
  {
   const size_t s = sizeof(ln_waveform[i]);
   assert(s == 65536);
 
-  if(i == 0x0)
-  {
-   for(int j = 0; j < 65536; j += 2)
-   {
-    lump[offs] = ln_waveform[i][j];
-    offs++;
-   }
-  }
-  else
-  {
-   memcpy(lump + offs, ln_waveform[i], s);
-   offs += s;
-  }
+  memcpy(lump + offs, ln_waveform[i], s);
+  offs += s;
   assert(!(offs & 1));
  }
 
@@ -448,17 +457,15 @@ static void lookup_table(void)
   {
    const size_t s = sizeof(saw_waveform[i]);
 
-   //assert(s == 1024);
-   //assert(s == 2048);
-
-   base[i] = offs + (s / 2);	// + (s / 2) for FM signed displacement.
+   assert(s == 1024 * sizeof(saw_waveform[i][0]));
+   base[i] = offs;
    if(i >= 8 && i != 0x8 && i != 0xA && i != 0xB && i != 0xC && i != 0xD && i != 0x0F && i != 0x11 && i != 0x2A)
    {
-    memcpy(lump + offs + (s / 2), saw_waveform[i],         s / 2);
-    memcpy(lump + offs,           saw_waveform[i] + s / 2, s / 2);
-    lump[offs + s] = lump[offs]; // Duplicate sample for linear interpolation.
-    offs += s + 2;
-
+    for(unsigned j = 0; j < 1024; j++)
+    {
+     lump[offs++] = saw_waveform[i][j] >> 8;
+     lump[offs++] = saw_waveform[i][j] >> 0;
+    }
     assert(!(offs & 1));
    }
   }
@@ -548,7 +555,101 @@ static void lookup_table(void)
  }
  assert(((offs - 1) >> 16) == saw_bank64k);
 
+
+ //
+ // Short mode noise
+ //
+ {
+  uint32 base[64] = { 0 };
+
+  //printf("%u\n", 0x400 - (offs & 0x3FF));
+  offs = (offs + 0x3FF) &~ 0x3FF;
+  //assert(!(offs & 0x3FF));
+
+  for(unsigned i = 0; i < 64; i++)
+  {
+   //const unsigned variant = i >> 4;
+   const unsigned nf = i & 0xF;
+   const size_t s = sizeof(sn_waveform[i]);
+
+   assert(s == 1024);
+   assert((offs >> 16) == ((offs + 0x3FF) >> 16));
+
+   if(nf >= SN_FBIN_COUNT)
+    base[i] = base[(i & ~0xF) + SN_FBIN_COUNT - 1];
+   else
+   {
+    // Offset of 512 to handle sign extension in DSP when translating 16-bit position
+    // to 10-bit position with multiplication for short noise mode.
+    base[i] = offs + (1024 / 2);
+    memcpy(lump + offs, sn_waveform[i], s);
+    offs += s;
+    assert(!(offs & 1));
+   }
+  }
+
+  for(unsigned i = 0; i < 256; i++)
+  {
+   const bool mode = (bool)(i & 0x80);
+   const uint8 ps = i & 0x0F;
+   const unsigned period = noise_period_table[pal][i & 0x0F];
+   uint32 freq;
+
+   if(mode)
+    freq = (uint64)(((uint64)1 << (31 - 10)) * apu_freq / SAMPLE_RATE * 1024 / 1023 * 11 / period);
+   else
+    freq = (uint64)(((uint64)1 << (31 - 16)) * apu_freq / SAMPLE_RATE * 65536 / (32767 * 2) * 2 / period);
+
+   noise_period_to_freq_lo[i] = freq & 0x7FFF;
+   noise_period_to_freq_hi[i] = freq >> 15;
+
+   if(mode)
+    noise_period_to_modemul[i] = (int16)0x8000 >> (16 - 10);
+   else if(ps == 0x0 || ps >= (LN_FBIN_COUNT - 1))
+    noise_period_to_modemul[i] = 0x8000 >> 1;
+   else
+    noise_period_to_modemul[i] = 0x8000;
+
+   assert(!(noise_period_to_modemul[i] & 0x7));
+
+   {
+    uint16 base_lo;
+    uint16 base_hi;
+
+    if(mode)
+    {
+     const uint32 b = base[i & 0x3F];
+     base_lo = b;
+     base_hi = b >> 16;
+    }
+    else
+    {
+     if(ps == 0x0 || ps >= (LN_FBIN_COUNT - 1))
+     {
+      base_lo = ((ps == 0) ? 0 : 32768) + (32768 / 2);
+      base_hi = 0;
+     }
+     else
+     {
+      base_lo = 0;
+      base_hi = ps;
+     }
+    }
+
+    assert(base_hi < 0x10);
+    noise_period_to_base_lo[i] = -base_lo;
+    noise_period_to_base_hi[i] = -(base_hi | (1U << 4) | (1U << 5) | (0 << 7) | (0 << 9) | (1 << 11));
+   }
+  }
+ }
+
+ //
+ dsp_lump_base = offs;
+ offs += dsp_lump_size;
+
+ //
  // Triangle map
+ //
  {
   int16 tri_map[2048] = { 0 };
 
@@ -598,6 +699,7 @@ static void lookup_table(void)
  //printf("%u\n", 65536 - (offs & 0xFFFF));
  //offs = (offs + 0xFFFF) &~ 0xFFFF;
  const uint8 tri_bank64k = offs >> 16;
+ printf("%08x\n", offs);
  {
   uint16 base[TRI_FBIN_COUNT] = { 0 };
 
@@ -645,90 +747,9 @@ static void lookup_table(void)
   }
  }
  assert(((offs - 1) >> 16) == tri_bank64k);
-
- // Short mode noise
- {
-  uint32 base[64] = { 0 };
-
-  //printf("%u\n", 0x400 - (offs & 0x3FF));
-  offs = (offs + 0x3FF) &~ 0x3FF;
-  //assert(!(offs & 0x3FF));
-
-  for(unsigned i = 0; i < 64; i++)
-  {
-   //const unsigned variant = i >> 4;
-   const unsigned nf = i & 0xF;
-   const size_t s = sizeof(sn_waveform[i]);
-
-   assert(s == 1024);
-   assert((offs >> 16) == ((offs + 0x3FF) >> 16));
-
-   if(nf >= SN_FBIN_COUNT)
-    base[i] = base[(i & ~0xF) + SN_FBIN_COUNT - 1];
-   else
-   {
-    // Offset of 512 to handle sign extension in DSP when translating 16-bit position
-    // to 10-bit position with multiplication for short noise mode.
-    base[i] = offs + (1024 / 2);
-    memcpy(lump + offs, sn_waveform[i], s);
-    offs += s;
-    assert(!(offs & 1));
-   }
-  }
-
-  for(unsigned i = 0; i < 256; i++)
-  {
-   const bool mode = (bool)(i & 0x80);
-   const uint8 ps = i & 0x0F;
-   const unsigned period = noise_period_table[pal][i & 0x0F];
-   uint32 freq;
-
-   if(mode)
-    freq = (uint64)(((uint64)1 << (31 - 10)) * apu_freq / SAMPLE_RATE * 1024 / 1023 * 11 / period);
-   else
-    freq = (uint64)(((uint64)1 << (31 - 16)) * apu_freq / SAMPLE_RATE * 65536 / (32767 * 2) * 2 / period);
-
-   noise_period_to_freq_lo[i] = freq & 0x7FFF;
-   noise_period_to_freq_hi[i] = freq >> 15;
-
-   if(mode)
-    noise_period_to_modemul[i] = (int16)0x8000 >> (16 - 10);
-   else if(ps == 0x0)
-    noise_period_to_modemul[i] = 0x8000 >> 1;
-   else
-    noise_period_to_modemul[i] = 0x8000;
-
-   assert(!(noise_period_to_modemul[i] & 0x7));
-
-   {
-    uint16 base_lo;
-    uint16 base_hi;
-
-    if(mode)
-    {
-     const uint32 b = base[i & 0x3F];
-     base_lo = b;
-     base_hi = b >> 16;
-    }
-    else
-    {
-     if(ps == 0x0)
-      base_lo = 0 + (32768 / 2);
-     else
-      base_lo = 0;
-
-     base_hi = LN_FBIN_COUNT - 1 - std::min<int>(LN_FBIN_COUNT - 1, ps);
-    }
-
-    assert(base_hi < 0x10);
-    noise_period_to_base_lo[i] = -base_lo;
-    noise_period_to_base_hi[i] = -(base_hi | (1U << 4) | (1U << 5) | (0 << 7) | (0 << 9) | (1 << 11));
-   }
-  }
- }
  //
  //
- const uint32 dsp_base = offs &~ 0x1FFF;
+ const uint32 dsp_base = dsp_lump_base &~ 0x1FFF; /*offs &~ 0x1FFF*/;
  uint16 madrs[32] = { 0 };
  unsigned madr_counter = 0;
 
@@ -736,12 +757,12 @@ static void lookup_table(void)
  {						\
   const size_t s = sizeof(v);			\
   assert(!(s & 1));				\
-  assert((offs - dsp_base) < 65536 * 2);	\
-  madrs[madr_counter] = (offs - dsp_base) >> 1;	\
+  assert((dsp_lump_base + dsp_lump_offs - dsp_base) < 65536 * 2);	\
+  madrs[madr_counter] = (dsp_lump_base + dsp_lump_offs - dsp_base) >> 1;	\
   fprintf(fp, "#define MADR_%s 0x%02X // %4zu\n", name, madr_counter, s >> 1);	\
   for(unsigned appi = 0; appi < s; appi++)	\
-   lump[offs + appi] = ((uint8*)(&v))[appi ^ 1];		\
-  offs += s;					\
+   dsp_lump[dsp_lump_offs + appi] = ((uint8*)(&v))[appi ^ 1];		\
+  dsp_lump_offs += s;					\
   madr_counter++;				\
  }
 
@@ -749,12 +770,12 @@ static void lookup_table(void)
  {										\
   const size_t s = sizeof(v);							\
   assert(!(s & 1));								\
-  assert((offs - dsp_base) < 65536 * 2);					\
-  madrs[madr_counter] = (((offs + (s >> 1)) - dsp_base) >> 1);			\
+  assert((dsp_lump_base + dsp_lump_offs - dsp_base) < 65536 * 2);					\
+  madrs[madr_counter] = (((dsp_lump_base + dsp_lump_offs + (s >> 1)) - dsp_base) >> 1);			\
   fprintf(fp, "#define MADR_%s 0x%02X // %4zu\n", name, madr_counter, s >> 1);	\
   for(unsigned appi = 0; appi < s; appi++)					\
-   lump[offs + (((s >> 1) + appi) % s)] = ((uint8*)(&v))[appi ^ 1];		\
-  offs += s;									\
+   dsp_lump[dsp_lump_offs + (((s >> 1) + appi) % s)] = ((uint8*)(&v))[appi ^ 1];		\
+  dsp_lump_offs += s;									\
   madr_counter++;								\
  }
 
@@ -786,7 +807,7 @@ static void lookup_table(void)
  {
   uint16 position[5] = { 0 };
 
-  fprintf(fp, "static const uint32 position_addr = 0x%06X;\n\n", offs);
+  fprintf(fp, "static const uint32 position_addr = 0x%06X;\n\n", dsp_lump_base + dsp_lump_offs);
 
   APPEND(position[0], "TRI_POSITION")
   APPEND(position[1], "PULSE0A_POSITION")
@@ -835,58 +856,53 @@ static void lookup_table(void)
  for(unsigned i = 0; i < 2; i++)
  {
   const unsigned ptnfifo_size = 4096 * sizeof(uint16);
-  const unsigned ptnfifo_base = offs;
+  const unsigned ptnfifo_base = dsp_lump_base + dsp_lump_offs;
 
   fprintf(fp, "#define MADR_PTNFIFO%c 0x%02X\n", 'A' + i, madr_counter);
 
   madrs[madr_counter] = (ptnfifo_base - dsp_base) / 2 + ptnfifo_size / sizeof(uint16) / 2;
   madr_counter++;
 
-  offs += ptnfifo_size;
+  dsp_lump_offs += ptnfifo_size;
  }
 
  {
   const unsigned cfifo_size = 2048 * sizeof(uint16);
-  const unsigned cfifo_base = offs;
+  const unsigned cfifo_base = dsp_lump_base + dsp_lump_offs;
 
   fprintf(fp, "#define MADR_CFIFO 0x%02X\n", madr_counter);
   madrs[madr_counter] = (cfifo_base - dsp_base) / 2 + cfifo_size / sizeof(uint16) / 2;
   madr_counter++;
 
-  offs += cfifo_size;
+  dsp_lump_offs += cfifo_size;
  }
 
  {
-  static const int8 cfifo_counter_waveform[32 + 1] =
-  {
-   -0x00, -0x04, -0x08, -0x0C,
-   -0x10, -0x14, -0x18, -0x1C,
-   -0x20, -0x24, -0x28, -0x2C,
-   -0x30, -0x34, -0x38, -0x3C,
-   -0x40, -0x44, -0x48, -0x4C,
-   -0x50, -0x54, -0x58, -0x5C,
-   -0x60, -0x64, -0x68, -0x6C,
-   -0x70, -0x74, -0x78, -0x7C,
-   -0x80
-  };
+  const unsigned exchip_size = 2048 * sizeof(uint16);
+  const unsigned exchip_base = dsp_lump_base + dsp_lump_offs;
 
-  fprintf(fp, "static const uint32 cfifo_counter_waveform_addr = 0x%06X;\n\n", (unsigned)offs);
+  fprintf(fp, "#define MADR_EXCHIP 0x%02X\n", madr_counter);
+  madrs[madr_counter] = (exchip_base - dsp_base) / 2 + exchip_size / sizeof(uint16) / 2;
+  madr_counter++;
 
-  const size_t s = sizeof(cfifo_counter_waveform);
-
-  memcpy(lump + offs, cfifo_counter_waveform, s);
-  offs += (s + 1) &~ 1;
+  dsp_lump_offs += exchip_size;
  }
 
  {
   fprintf(fp, "#define MADR_CFIFO_POSITION 0x%02X\n", madr_counter);
-  fprintf(fp, "static const uint32 cfifo_position_addr = 0x%06X;\n\n", offs);
+  fprintf(fp, "static const uint32 cfifo_position_addr = 0x%06X;\n\n", dsp_lump_base + dsp_lump_offs);
 
-  madrs[madr_counter] = (offs - dsp_base) / 2;
+  madrs[madr_counter] = (dsp_lump_base + dsp_lump_offs - dsp_base) / 2;
   madr_counter++;
 
-  offs += 2;
+  dsp_lump_offs += 2;
  }
+
+
+ assert(dsp_lump_offs <= dsp_lump_size);
+ //printf("%u\n", dsp_lump_offs);
+
+ memcpy(lump + dsp_lump_base, dsp_lump, dsp_lump_size);
 
  fprintf(fp, "\n\n");
 
@@ -907,15 +923,17 @@ static void lookup_table(void)
 
  fclose(fp);
  //
+ printf("SCSP RAM Usage: %u bytes\n", offs + 4);
+ assert(offs <= (524288 - 4));
+
+ memcpy(lump + (524288 - 4), (pal ? "PAL " : "NTSC"), 4);
+ //
  //
  {
   fp = fopen(pal ? "scsppal.bin" : "scspntsc.bin", "wb");
   fwrite(&lump, 1, sizeof(lump), fp);
   fclose(fp);
  }
- //
- assert(offs <= 524288);
- printf("SCSP RAM Usage: %u bytes\n", offs);
 }
 
 static void saw(void)
@@ -947,8 +965,8 @@ static void saw(void)
     v += sin(i * M_PI * 2 * harm / samples_per_saw_fbin) / harm;
 
    v = (v * 2 / M_PI) * 106;
-   int temp = ((int)(v * 256) + ((rand() >> 8) & 0xFF)) >> 8;
-   assert(temp >= -127 && temp <= 127);
+   int temp = ((int)(v * 65536) + ((rand() >> 8) & 0xFF)) >> 8;
+   assert(temp >= -127 * 256 && temp <= 127 * 256);
    
    saw_waveform[w][i] = temp;
   }
@@ -989,6 +1007,163 @@ static void triangle(void)
  }
 }
 
+static void exchip(void)
+{
+ enum : int { samples_per_saw_fbin = 7 * 585 };
+ //
+ std::unique_ptr<int16[]> data(new int16[1024 * 1024 * 2]); //48 * 2 * 2048];
+ uint32 offs = 0;
+ unsigned fbin_remap_counter = 0;
+ uint8 pulse_fbin_remap[48];
+ uint8 saw_fbin_remap[48];
+
+ for(unsigned duty = 0; duty < 8; duty++)
+ {
+  fbin_remap_counter = 0;
+  for(unsigned w = 0; w < 48; w++)
+  {
+   int max_period;
+
+   if(w < 0x10)
+    max_period = 1 + w;
+   else
+    max_period = 1 + ((0x10 + ((w & 0x3) << 2) ) << ((w - 0x10) >> 2));
+
+   //printf("0x%04x %d\n", max_period - 1, w);
+   assert(max_period <= 0x1000);
+   double max_freq = apu_freq / 16 / max_period;
+   unsigned max_harm = std::min<double>((1024 / 4) - 1, SAMPLE_RATE / 2.0 / max_freq);
+
+   //printf("%2u %4u\n", w, max_harm);
+
+   pulse_fbin_remap[w] = fbin_remap_counter;
+
+   if(w < 9 || w == 10 || w == 11 || w == 12 || w == 13 || w == 15 || w == 17 || (w >= 42 && w < 47))
+   {
+
+   }
+   else
+   {
+    //if(i >= 8 && i != 0x8 && i != 0xA && i != 0xB && i != 0xC && i != 0xD && i != 0x0F && i != 0x11 && i != 0x2A)
+    double pulse_input_wf[16];
+    double pulse_output_wf[1024];
+
+    for(unsigned i = 0; i < 16; i++)
+     pulse_input_wf[i] = (((i ^ 15) <= duty) ? 64 : 0);
+
+    synthpt<16, 1024>(pulse_input_wf, pulse_output_wf, max_harm);
+    reduce<1024>(pulse_output_wf, data.get() + offs);
+    data[offs + 1024] = data[offs + 0];	// Duplicate for linear interpolation.
+    offs += 1024 + 1;
+    //
+    fbin_remap_counter++;
+   }
+  }
+ }
+
+ for(unsigned i= 0; i < (1024 + 1); i++)
+  data[offs++] = 64 * 256;
+
+ //
+ //
+ double saw_input_wf[7];
+ double saw_output_wf[samples_per_saw_fbin];
+
+ for(unsigned i = 0; i < 7; i++)
+  saw_input_wf[i] = ((i == 1) ? 64 : 0);
+
+ fbin_remap_counter = 0;
+ for(unsigned w = 0; w < 48; w++)
+ {
+  int max_period;
+
+  if(w < 0x10)
+   max_period = 1 + w;
+  else
+   max_period = 1 + ((0x10 + ((w & 0x3) << 2) ) << ((w - 0x10) >> 2));
+
+  assert(max_period <= 0x1000);
+
+  double max_freq = apu_freq / 14 / max_period;
+  unsigned max_harm = (unsigned)floor(std::min<double>((samples_per_saw_fbin / 8) - 1, SAMPLE_RATE / 2.0 / max_freq));
+
+  //printf("S %2u %4u\n", w, max_harm);
+
+  saw_fbin_remap[w] = fbin_remap_counter;
+  if(w < 10 || w == 11 || w == 12 || w == 13 || w == 14 || w == 15 || w == 19 || w == 46)
+  {
+
+  }
+  else
+  {
+   synthpt<7, samples_per_saw_fbin>(saw_input_wf, saw_output_wf, max_harm);
+   reduce<samples_per_saw_fbin>(saw_output_wf, data.get() + offs);
+   offs += 4096; //;
+   //
+   fbin_remap_counter++;
+  }
+ }
+
+ {
+  static const int16 resamp_n163[256 * 40] =
+  {
+   #include "resamp_n163.h"
+  };
+
+  static const int16 resamp_div16[256 * 40] =
+  {
+   #include "resamp_div16.h"
+  };
+
+  for(unsigned i = 0; i < sizeof(resamp_n163) / sizeof(resamp_n163[0]); i++)
+  {
+   data[offs++] = resamp_n163[i];
+  }
+
+  for(unsigned i = 0; i < sizeof(resamp_div16) / sizeof(resamp_div16[0]); i++)
+  {
+   data[offs++] = resamp_div16[i];
+  }
+ }
+
+ //assert(offs <= 524288);
+ //
+ //
+ {
+  FILE* fp = fopen("exchip.bin", "wb");
+
+  for(unsigned i = 0; i < offs; i++)
+  {
+   int v = data[i];
+
+   putc((unsigned char)(v >> 8), fp);
+   putc((unsigned char)(v >> 0), fp);
+  }
+
+  fclose(fp);
+ }
+
+ {
+  FILE* fp = fopen("exchip_lut.h", "wb");
+
+  fprintf(fp, "static const int8 pulse_remap_lut_init[48] =\n{\n");
+
+  for(unsigned i = 0; i < 48; i++)
+   fprintf(fp, " 0x%02X,\n", pulse_fbin_remap[i]);
+
+  fprintf(fp, "};\n\n");
+
+  fprintf(fp, "static const int8 saw_remap_lut_init[48] =\n{\n");
+
+  for(unsigned i = 0; i < 48; i++)
+   fprintf(fp, " 0x%02X,\n", saw_fbin_remap[i]);
+
+  fprintf(fp, "};\n");
+
+  fclose(fp);
+ }
+}
+
 int main(int argc, char* argv[])
 {
  const double ideal_ntsc_cpu_freq = 315.0 / 88 * 1000 * 1000 / 2;
@@ -1019,5 +1194,9 @@ int main(int argc, char* argv[])
   noise_short();
 
   lookup_table();
+  //
+  //
+  if(!pal)
+   exchip();
  }
 }

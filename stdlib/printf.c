@@ -167,14 +167,14 @@ static bool process_unsigned(__fstrcontext_t* ctx, const unsigned long long v_in
 {
  unsigned long long v = v_in;
  int field_width = ctx->field_width;
- int precision = (ctx->precision_valid ? ctx->precision : 0);
+ int precision = (ctx->precision_valid ? ctx->precision : 1);
  char buf[64 + 1];
  char* d = buf + sizeof(buf) - 1;
  bool ret;
 
  buf[sizeof(buf) - 1] = 0;
 
- if(!v && field_width <= 0)
+ if(!v && precision <= 0)
   return true;
  //
  //
@@ -331,7 +331,7 @@ static int _Xprintf(__fstrcontext_t* ctx, const char* format, va_list ap)
     ctx->flag_alternate = false;
     ctx->flag_zero = false;
     //
-    ctx->field_width = 1;
+    ctx->field_width = 0;
     ctx->precision = 0;
     ctx->precision_valid = false;
     ctx->length_modifier = 0;

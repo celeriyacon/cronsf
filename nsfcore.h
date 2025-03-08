@@ -31,16 +31,28 @@ typedef struct nsfcore_file_callb_t_
  ssize_t (*read)(struct nsfcore_file_callb_t_* callb, void* ptr, size_t count);
  int32 (*tell)(struct nsfcore_file_callb_t_* callb);
  int (*seek)(struct nsfcore_file_callb_t_* callb, int32 position);
+ int32 (*size)(struct nsfcore_file_callb_t_* callb);
 
  void* priv;
  uint32 priv_u32[2];
 } nsfcore_file_callb_t;
+
+enum
+{
+ CHIP_MASK_VRC6  = 0x01,
+ CHIP_MASK_VRC7  = 0x02,
+ CHIP_MASK_FDS	 = 0x04,
+ CHIP_MASK_MMC5  = 0x08,
+ CHIP_MASK_N163  = 0x10,
+ CHIP_MASK_SUN5B = 0x20,
+};
 
 typedef struct nsf_meta_t_
 {
  uint8 song_count;
  uint8 song_start;
  uint8 chip;
+ uint8 chip_emulated;
  char title[127 + 1];
  char artist[127 + 1];
  char copyright[127 + 1];
@@ -59,6 +71,8 @@ COLD_SECTION const char* nsfcore_get_error(void);
 COLD_SECTION void nsfcore_make_mem_callb(nsfcore_file_callb_t* callb, const void* data, uint32 size);
 COLD_SECTION void nsfcore_make_stdio_callb(nsfcore_file_callb_t* callb, FILE* stream);
 
+COLD_SECTION void nsfcore_slave_entry(void);
+
 COLD_SECTION bool nsfcore_init(void);
 
 // Pointer returned from nsfcore_load*() will remain valid until 
@@ -69,6 +83,10 @@ COLD_SECTION const nsf_meta_t* nsfcore_load(nsfcore_file_callb_t* callb);
 // to read either "scsppal.bin" or "scspntsc.bin", depending on the
 // "pal" member of the nsf_meta_t struct.
 COLD_SECTION bool nsfcore_load_scsp_bin(nsfcore_file_callb_t* callb);
+
+COLD_SECTION bool nsfcore_swapload_scsp_bin(volatile void* mem);
+
+COLD_SECTION bool nsfcore_load_exchip_bin(nsfcore_file_callb_t* callb);
 
 void nsfcore_set_song(uint8 w);
 
@@ -94,5 +112,8 @@ void* nsfcore_get_rom_ptr(size_t* max_size);
 
 COLD_SECTION void nsfcore_close(void);
 COLD_SECTION void nsfcore_kill(void);
+
+// TODO: move
+uint32 exp2_fxp_16_16(const int32 twex);
 
 #endif

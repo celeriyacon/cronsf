@@ -33,8 +33,8 @@
 
 #include <string.h>
 
-static unsigned nt_addr = 0x10000;
-static const unsigned cg_addr = 0x00000;
+static unsigned nt_addr = 0x00000;
+static const unsigned cg_addr = 0x10000;
 static volatile uint32* nt_ptr;
 static unsigned draw_x_base;
 static bool hires_mode;
@@ -239,7 +239,7 @@ void gfx_init(void)
  SCXN2 = 0;
  SCYN2 = 0;
 
- RAMCTL = (CRAM_MODE_RGB555_2048 << 12) | (0U << 9) | (1U << 8);
+ RAMCTL = (CRAM_MODE_RGB555_2048 << 12) | (0U << 9) | (0U << 8);
 
  for(unsigned i = 0; i < 16 * 8; i++)
  {
@@ -264,35 +264,11 @@ void gfx_init(void)
   for(unsigned i = 0; i < 4; i++)
   {
    for(unsigned j = 0; j < 8; j++)
-    vcp[i][j] = VCP_CPU;
+    vcp[i][j] = ((i & 1) ? VCP_NOP : VCP_CPU);
   }
 
-  vcp[cg_addr >> 16][0] = VCP_NBG2_CG;
-  vcp[nt_addr >> 16][0] = VCP_NBG2_NT;
-
-  for(unsigned i = 0; i < 4; i++)
-  {
-   for(unsigned j = 0; j < 8; j++)
-   {
-    const uint8 c = vcp[i][j];
-    const uint8 p = vcp[i][(j - 1) & 0x7];
-
-    if(c == VCP_CPU && (p != VCP_NOP && p != VCP_CPU))
-     vcp[i][j] = VCP_NOP;
-   }
-  }
-
-  for(unsigned i = 0; i < 4; i++)
-  {
-   for(unsigned j = 0; j < 8; j++)
-   {
-    const uint8 c = vcp[i][j];
-    const uint8 a = vcp[i ^ 1][j];
-
-    if(c == VCP_CPU && a != VCP_CPU)
-     vcp[i][j] = VCP_NOP;
-   }
-  }
+  vcp[(cg_addr >> 16) &~ 1][0] = VCP_NBG2_CG;
+  vcp[(nt_addr >> 16) &~ 1][1] = VCP_NBG2_NT;
 
   for(unsigned region = 0; region < 4; region++)
   {

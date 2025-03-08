@@ -1,7 +1,7 @@
 /*
  * apu.c
  *
- * Copyright (C) 2024 celeriyacon - https://github.com/celeriyacon
+ * Copyright (C) 2024-2025 celeriyacon - https://github.com/celeriyacon
  *
  * This software is provided 'as-is', without any express or implied
  * warranty.  In no event will the authors be held liable for any damages
@@ -928,7 +928,12 @@ void apu_frame(uint32 timestamp)
  {
   const uint16 raw_sspos = SCSP(cfifo_position_addr);
   const uint32 delta = ((sample_time - (raw_sspos >> 5) - 1024) & 0x7FF);
-  printf("delta: %3d\n", (delta - 1024));
+  static const char tab[16] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
+
+  SCSP_CREG_LO(0x6) = tab[(delta >> 8)];
+  SCSP_CREG_LO(0x6) = tab[(delta >> 4) & 0xF];
+  SCSP_CREG_LO(0x6) = tab[(delta >> 0) & 0xF];
+  SCSP_CREG_LO(0x6) = ((delta < 900) ? '!' : '\n');
  }
 #endif
 
@@ -937,7 +942,7 @@ void apu_frame(uint32 timestamp)
   const uint16 raw_sspos = SCSP(cfifo_position_addr);
   const uint32 delta = ((sample_time - (raw_sspos >> 5) - 1024) & 0x7FF);
 
-#if (APU_DEBUG)
+#if (APU_DEBUG) && !((APU_DEBUG) & 0x2)
   if(delta < 900) //768)
    SCSP_CREG_LO(0x6) = 'U';
 #endif
@@ -945,12 +950,20 @@ void apu_frame(uint32 timestamp)
   if(delta < 1024)
    break;
 
-#if APU_BUSYWAIT_NO_HOG_BUS
-  //
-  // Use when running on the slave CPU
-  //
   {
-   unsigned wait_count = (delta - 1023) * APU_BUSYWAIT_NO_HOG_BUS;
+   //
+   // Avoid starving the slave CPU of bus time, important when
+   // emulating an expansion chip on it.
+   //
+   unsigned wait_count = 200 / 4;
+
+#if APU_BUSYWAIT_NO_HOG_BUS
+   //
+   // Avoid starving the master CPU of bus time when running the main emulation
+   // on the slave CPU.
+   //
+   wait_count = (delta - 1023) * APU_BUSYWAIT_NO_HOG_BUS;
+#endif
 
    asm volatile(
 	"dt %0\n\t"
@@ -969,11 +982,10 @@ void apu_frame(uint32 timestamp)
     printf("delta2: %4u, %4u\n", delta, delta2);
 */
   }
-#endif
  }
  //
  //
- const uint32 adj = timestamp & ~((1U << 21) - 1);
+ const uint32 adj = timestamp;
 
  dmc.sample_offs += adj * dmc.timestamp_scale;
 
@@ -1034,6 +1046,9 @@ void apu_frame(uint32 timestamp)
 #define CRA_PULSE_DCBIAS_SCALE 0x21
 #define CRA_PCM_VOLUME	  0x22
 
+#define CRA_APU_VOLUME	  0x30
+#define CRA_EXCHIP_VOLUME 0x31
+
 #define DSP_CRA_NEG1		DSP_CRA(CRA_NEG1)
 #define DSP_CRA_1_DIV_256	DSP_CRA(CRA_1_DIV_256)
 #define DSP_CRA_1_DIV_4096	DSP_CRA(CRA_1_DIV_4096)
@@ -1051,6 +1066,10 @@ void apu_frame(uint32 timestamp)
 
 #define DSP_CRA_TRI_VOLUME	DSP_CRA(CRA_TRI_VOLUME)
 #define DSP_CRA_PCM_VOLUME	DSP_CRA(CRA_PCM_VOLUME)
+
+#define DSP_CRA_APU_VOLUME	DSP_CRA(CRA_APU_VOLUME)
+#define DSP_CRA_EXCHIP_VOLUME 	DSP_CRA(CRA_EXCHIP_VOLUME)
+
 
 #define DSP_CRA_PULSE_DCBIAS_SCALE DSP_CRA(CRA_PULSE_DCBIAS_SCALE)
 
@@ -1079,28 +1098,28 @@ enum
  MEMS_NOISE_BASELO	= 0x11,
  MEMS_NOISE_BASEHI	= 0x12,
  MEMS_NOISE_MODEMUL	= 0x13,
+ MEMS_NOISE_VOLUME	= 0x14,
 
- MEMS_PCM_QNLSCALE	= 0x14,
+ MEMS_PCM_QNLSCALE	= 0x15,
 
- MEMS_TEMP0 		= 0x15,
- MEMS_TEMP1 		= 0x16,
- MEMS_TEMP2 		= 0x17,
- MEMS_TEMP3 		= 0x18,
- MEMS_TEMP4 		= 0x19,
+ MEMS_TEMP0 		= 0x16,
+ MEMS_TEMP1 		= 0x17,
+ MEMS_TEMP2 		= 0x18,
+ MEMS_TEMP3 		= 0x19,
+ MEMS_TEMP4 		= 0x1A,
 
- MEMS_4096_SL3		= 0x1A,
- MEMS_4096_SL5		= 0x1B,
- MEMS_4096_SL7		= 0x1C,
- MEMS_4096_SL8 		= 0x1D,
- MEMS_NEG4096_SL10 	= 0x1E,
- MEMS_NEG4096_SL11	= 0x1F,
+ MEMS_EXCHIP		= 0x1B,
+
+ MEMS_4096_SL3		= 0x1C,
+ MEMS_4096_SL5		= 0x1D,
+ MEMS_4096_SL7		= 0x1E,
+ MEMS_4096_SL8		= 0x1F
 };
 
 enum
 {
  MEMS_PULSE0_VOLUME = MEMS_TEMP0,
  MEMS_PULSE1_VOLUME = MEMS_TEMP1,
- MEMS_NOISE_VOLUME = MEMS_TEMP2,
  // Don't alias/overwrite MEMS_TEMP4
 };
 
@@ -1113,6 +1132,8 @@ enum
  //
  //
  MIXS_NEG4096_SL9	= 0x2D,
+ MIXS_NEG4096_SL10 	= 0x2E,
+ MIXS_NEG4096_SL11	= 0x2F,
 };
 
 enum
@@ -1140,6 +1161,7 @@ enum
  TEMP_NOISE_VOLDLY2 = 0x3A,
  TEMP_NOISE_VOLDLY3 = 0x3B,
 
+ TEMP_PULSES_SAMPLE  = 0x3D,
  TEMP___P_SAMPLE     = 0x3E,
  TEMP_TNP_SAMPLE     = 0x3F,
 
@@ -1169,13 +1191,29 @@ enum
 
  TEMP_CFIFO_POS      = 0x60,
  TEMP_CFIFO_POS_PREV = 0x61,
+
+ TEMP_EXCHIP_DLY0 = 0x62,
+ TEMP_EXCHIP_DLY1 = 0x63,
+ TEMP_EXCHIP_DLY2 = 0x64,
+ TEMP_EXCHIP_DLY3 = 0x65,
+ TEMP_EXCHIP_DLY4 = 0x66,
+ TEMP_EXCHIP_DLY5 = 0x67,
+ TEMP_EXCHIP_DLY6 = 0x68,
+
+ TEMP_APU_OUTPUT	   = 0x69,
+ TEMP_COMBINED_OUTPUT_DLY0 = 0x6A,
+ TEMP_COMBINED_OUTPUT_DLY1 = 0x6B,
  //
  //
  //
  TEMP_GUARD0	     = 0x6D,
  TEMP_PCM_VALUE      = 0x6E,
  TEMP_PCM_VALUE_PREV = 0x6F,
-	
+ TEMP_PCM_VALUE_DLY2 = 0x70,
+ TEMP_PCM_VALUE_DLY3 = 0x71,
+ TEMP_PCM_VALUE_DLY4 = 0x72,
+
+
  TEMP_GUARD1	    	= 0x7D,
  TEMP_PTNFIFO_POS	= 0x7E,
  TEMP_PTNFIFO_POS_PREV	= 0x7F,
@@ -1188,15 +1226,15 @@ static const uint8 Init68KProg[] =
 };
 
 // 0x0...
-#define EFREG_PULSE0A_ADDR 0x1
-#define EFREG_PULSE0B_ADDR 0x3
-#define EFREG_PULSE1A_ADDR 0x5
-#define EFREG_PULSE1B_ADDR 0x7
+#define EFREG_PULSE0_ADDR 0x1
+#define EFREG_PULSE1_ADDR 0x5
 #define EFREG_TRI_ADDR	   0x9
 #define EFREG_NOISE_ADDRHI 0xB
 #define EFREG_NOISE_ADDRLO 0xC
-#define EFREG_PULSE_PCM 0xE
-#define EFREG_TNP_PCM   0xF
+
+#define EFREG_APU_OUTPUT 0xF
+
+static uint64 mprog[256];
 
 void apu_preinit(void)
 {
@@ -1214,33 +1252,31 @@ void apu_preinit(void)
  /*
   Slots:
 
-   0...5: (unused alignment padding)
+    0...3: (unused alignment padding)
 
-   6: Triangle position reader
-   7: Pulse 0-A position reader
-   8: Pulse 0-B position reader
-   9: Pulse 1-A position reader
-   10: Pulse 1-B position reader
+    4: Triangle position reader
+    5: Pulse 0-A position reader
+    6: Pulse 0-B position reader
+    7: Pulse 1-A position reader
+    8: Pulse 1-B position reader
 
-   11: (value slot for DSP MIXS input)
+    9: Triangle map 
 
-   12: Triangle map 
-   13: Pulse 0-A waveform
-   14: Pulse 0-B waveform --- Pulse 0 + Pulse 1 PCM output from DSP(EFREG[0xE])
-   15: Pulse 1-A waveform
-   16: Pulse 1-B waveform
+   10: Pulse 0-A waveform
+   11: Pulse 0-B waveform
+   12: Pulse 1-A waveform
+   13: Pulse 1-B waveform
 
-   17: Noise waveform
-
-   18: Triangle waveform
+   14: Triangle waveform
+   15: Noise waveform
  
-   19: (FM reserved)
 
  DSP memory accesses:
   29 read + 7 write = 35
   (36 + 1) / 2 = 18 slots equivalent
   13 active slots + 18 DSP slot-equivalents + 1 DRAM refresh slot equivalent = 32 slots
  */
+ const unsigned base_slot = 4;
 
  for(unsigned slot = 0; slot < 32; slot++)
   SCSP_SREG(slot, 0x0C) = (1U << 9);
@@ -1248,7 +1284,7 @@ void apu_preinit(void)
  // Triangle, pulse0a, pulse0b, pulse1a, pulse1b position reader slots.
  for(unsigned i = 0; i < 5; i++)
  {
-  const unsigned slot = 6 + i;
+  const unsigned slot = base_slot + 0 + i;
   uint32 pa = position_addr + (i << 1);
 
   SCSP_SREG(slot, 0x00) = (1U << 11) | (0x0 << 9) | (0x1 << 5) | (0U << 4) | ((pa >> 16) << 0);
@@ -1260,8 +1296,8 @@ void apu_preinit(void)
 
  // Triangle map slot
  {
-  const unsigned slot = 12;
-  const unsigned mdxy = (0x40 - 6) & 0x3F;
+  const unsigned slot = base_slot + 5;
+  const unsigned mdxy = (0x40 - 5) & 0x3F;
   const unsigned mdl = 0xF - 5;
 
   SCSP_SREG(slot, 0x00) = (1U << 11) | (0x0 << 9) | (0x1 << 5) | (0U << 4) | (tri_map_addr >> 16);
@@ -1274,35 +1310,25 @@ void apu_preinit(void)
  // Pulse wave slots
  for(unsigned i = 0; i < 4; i++)
  {
-  const unsigned slot = 13 + i;
+  const unsigned slot = base_slot + 6 + i;
   const unsigned sb = (i >= 4 || !(i & 1)) ? 0x0 : 0x3;
   const unsigned isel = (i >> 1);
-  const unsigned mdxy = (0x40 - 6) & 0x3F;
+  const unsigned mdxy = (0x40 - 5) & 0x3F;
   const unsigned mdl = 0xA - 1;
 
-  SCSP_SREG(slot, 0x00) = (1U << 11) | (sb << 9) | (0x1 << 5) | (1U << 4) | (saw_bank64k << 0);
+  SCSP_SREG(slot, 0x00) = (1U << 11) | (sb << 9) | (0x1 << 5) | (0U << 4) | (saw_bank64k << 0);
+  SCSP_SREG(slot, 0x06) = 1024;
   SCSP_SREG(slot, 0x0C) = (1U << 9) | (1U << 8);
   SCSP_SREG(slot, 0x0E) = (mdl << 12) | (mdxy << 6) | (mdxy << 0);
-  SCSP_SREG(slot, 0x10) = (0x400 << 0);
-  SCSP_SREG(slot, 0x14) = (isel << 3) | (0x6 << 0);
- }
-
- // Noise slot
- {
-  const unsigned slot = 17;
-  const unsigned isel = 3;
-
-  SCSP_SREG(slot, 0x00) = (1U << 11) | (0x0 << 9) | (0x1 << 5) | (1U << 4);
-  SCSP_SREG(slot, 0x0C) = (1U << 9) | (1U << 8);
-  SCSP_SREG(slot, 0x10) = (0x400 << 0);
+  SCSP_SREG(slot, 0x10) = (0x400 << 0) | (1U << 15);
   SCSP_SREG(slot, 0x14) = (isel << 3) | (0x6 << 0);
  }
 
  // Triangle wave slot 
  {
-  const unsigned slot = 18;
+  const unsigned slot = base_slot + 10;
   const unsigned isel = 2;
-  const unsigned mdxy = (0x40 - 6) & 0x3F;
+  const unsigned mdxy = (0x40 - 5) & 0x3F;
   const unsigned mdl = 0xF - 5;
 
   SCSP_SREG(slot, 0x00) = (1U << 11) | (0x0 << 9) | (0x1 << 5) | (1U << 4) | (tri_bank64k << 0);
@@ -1311,31 +1337,51 @@ void apu_preinit(void)
   SCSP_SREG(slot, 0x10) = (0x400 << 0);
   SCSP_SREG(slot, 0x14) = (isel << 3) | (0x6 << 0);
  }
- // FM reserved slot
+
+ // Noise slot
  {
-  const unsigned slot = 19;
+  const unsigned slot = base_slot + 11;
+  const unsigned isel = 3;
+
+  SCSP_SREG(slot, 0x00) = (1U << 11) | (0x0 << 9) | (0x1 << 5) | (1U << 4);
+
+  //
+  // Set LSA and LEA to 0xFFFF to work around a race condition with the M68K program writing
+  // garbage to LPCTL, causing the effective fractional playback position to be inverted,
+  // triggering a hardware bug that screws up FM linear interpolation on the previous
+  // slot(triangle wave), resulting in audio glitches.
+  //
+  SCSP_SREG(slot, 0x04) = 0xFFFF;
+  SCSP_SREG(slot, 0x06) = 0xFFFF;
+
+  SCSP_SREG(slot, 0x0C) = (1U << 9) | (1U << 8);
   SCSP_SREG(slot, 0x10) = (0x400 << 0);
+  SCSP_SREG(slot, 0x14) = (isel << 3) | (0x6 << 0);
  }
 
- // DSP PCM output slots
- for(unsigned slot = 0x0E; slot < 0x10; slot++)
-  SCSP_SREG(slot, 0x16) = (0x07 << 5) | (0x00 << 0);
-
- // Value slot
+ // DSP PCM output slot
  {
-  const unsigned slot = 11;
+  const unsigned slot = EFREG_APU_OUTPUT;
+
+  SCSP_SREG(slot, 0x16) = (0x07 << 5) | (0x00 << 0);
+ }
+
+ // Value slots
+ for(unsigned i = 0; i < 3; i++)
+ {
+  static const int8 isel[3] = { MIXS_NEG4096_SL9, MIXS_NEG4096_SL10, MIXS_NEG4096_SL11 };
+  static const int8 imxl[3] = { 0x5, 0x6, 0x7 };
+  const unsigned slot = 24 + i; //base_slot + 5;
   SCSP_SREG(slot, 0x02) = 0;
   SCSP_SREG(slot, 0x04) = 0;
   SCSP_SREG(slot, 0x06) = 1;
 
-  SCSP_SREG(slot, 0x08) = (0x1F << 0) | (0x1F << 6) | (0x1F << 11);
-  SCSP_SREG(slot, 0x0A) = (0x1F << 0) | (0x00 << 5) | (0x0E << 10);
   SCSP_SREG(slot, 0x0C) = (1 << 8);
-  SCSP_SREG(slot, 0x10) = (0 << 11) | 0x000;
-  SCSP_SREG(slot, 0x14) = (MIXS_NEG4096_SL9 << 3) | 0x5;
+  SCSP_SREG(slot, 0x10) = 0x400;
+  SCSP_SREG(slot, 0x14) = (isel[i] << 3) | imxl[i];
   SCSP_SREG(slot, 0x16) = (0 << 13);
   SCSP_SREG(slot, 0x00) = (0 << 12) |
-	 		  (1 << 11) |
+	 		  (0 << 11) |
 			  (2 << 9) |
  			  (2 << 7) |
 			  ((0x00 & 0x3) << 5) |
@@ -1379,102 +1425,41 @@ void apu_preinit(void)
  COEF[CRA_TRI_VOLUME] = DSP_MAKE_COEF(tri_coef_volume);
  COEF[CRA_PCM_VOLUME] = DSP_MAKE_COEF(pcm_coef_volume);
 
+ COEF[CRA_APU_VOLUME] = DSP_MAKE_COEF(-4096);
+ COEF[CRA_EXCHIP_VOLUME] = DSP_MAKE_COEF(-4096);
+
  COEF[CRA_PULSE_DCBIAS_SCALE] = DSP_MAKE_COEF(-106 * 4096 / 128 / 2 / 2);
 
  MEMS[MEMS_4096_SL3] = DSP_MAKE_MEMS(4096 << 3);
  MEMS[MEMS_4096_SL5] = DSP_MAKE_MEMS(4096 << 5);
  MEMS[MEMS_4096_SL7] = DSP_MAKE_MEMS(4096 << 7);
  MEMS[MEMS_4096_SL8] = DSP_MAKE_MEMS(4096 << 8);
- MEMS[MEMS_NEG4096_SL10] = DSP_MAKE_MEMS(-(4096 << 10));
- MEMS[MEMS_NEG4096_SL11] = DSP_MAKE_MEMS(-(4096 << 11));
  //
  //
  //
  stuff.fifo_a = &SCSP16((((rbp_init << 12) + madrs_init[MADR_PTNFIFOA]) << 1) - (0x2000 / 2));
  stuff.fifo_b = &SCSP16((((rbp_init << 12) + madrs_init[MADR_PTNFIFOB]) << 1) - (0x2000 / 2));
  dmc.cfifo = &SCSP16((((rbp_init << 12) + madrs_init[MADR_CFIFO]) << 1) - (0x1000 / 2));
-}
-
-void apu_kill(void)
-{
- SCSP_CREG_LO(0x00 << 1) = (0x00 << 0);	// MVOL to min
-
- for(unsigned i = 0; i < 128; i++)
-  MPROG[i] = MPROG[i] & ~(DSP_TWT | DSP_MWT | DSP_EWT);
-
- scsp_wait_full_samples(4);
- 
- for(unsigned i = 0; i < 128; i++)
-  MPROG[i] = 0;
-
- scsp_wait_full_samples(4);
-
- for(unsigned i = 0; i < 0x800; i++)
-  dmc.cfifo[i] = 0;
-
- for(unsigned i = 0; i < 0x1000; i++)
- {
-  stuff.fifo_a[i] = 0;
-  stuff.fifo_b[i] = 0;
- }
-
- for(unsigned i = 0; i < 128; i++)
-  TEMP[i] = 0;
- //
- //
- MEMS[MEMS_PULSE0_FREQLO] = 0;
- MEMS[MEMS_PULSE0_FREQHI] = 0;
- MEMS[MEMS_PULSE0_PHOFFSA] = 0;
- MEMS[MEMS_PULSE0_PHOFFSB] = 0;
- MEMS[MEMS_PULSE0_BASE] = 0;
- MEMS[MEMS_PULSE0_PHRST] = 0;
-
- MEMS[MEMS_PULSE1_FREQLO] = 0;
- MEMS[MEMS_PULSE1_FREQHI] = 0;
- MEMS[MEMS_PULSE1_PHOFFSA] = 0;
- MEMS[MEMS_PULSE1_PHOFFSB] = 0;
- MEMS[MEMS_PULSE1_BASE] = 0;
- MEMS[MEMS_PULSE1_PHRST] = 0;
-
- MEMS[MEMS_TRI_FREQLO] = 0;
- MEMS[MEMS_TRI_FREQHI] = 0;
- MEMS[MEMS_TRI_BASE] = 0;
-
- MEMS[MEMS_NOISE_FREQLO] = 0;
- MEMS[MEMS_NOISE_FREQHI] = 0;
- MEMS[MEMS_NOISE_BASELO] = 0;
- MEMS[MEMS_NOISE_BASEHI] = 0;
- MEMS[MEMS_NOISE_MODEMUL] = 0;
-
- MEMS[MEMS_PCM_QNLSCALE] = 0;
-
- MEMS[MEMS_TEMP0] = 0;
- MEMS[MEMS_TEMP1] = 0;
- MEMS[MEMS_TEMP2] = 0;
- MEMS[MEMS_TEMP3] = 0;
- MEMS[MEMS_TEMP4] = 0;
- //
- //
- for(unsigned i = 0; i < 5; i++)
-  SCSP16(position_addr + (i << 1)) = 0;
-
- SCSP16(cfifo_position_addr) = 0;
- //
- //
- scsp_wait_full_samples(2);
-}
-
-COLD_SECTION static void init_scsp_part(void)
-{
- apu_kill();
  //
  //
  //
- static uint64 mprog[256];
+ //
+ //
+ //
+ //
  uint64* m = mprog;
 
- *(m++) = DSP_BSEL_TEMP | DSP_TRA(TEMP_PCM_VALUE_PREV) |	// PCM channel value+delta->value
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_NEG4096_SL11) |	// PCM channel value+delta->value
+ *(m++) = DSP_TWT | DSP_TWA(TEMP_APU_OUTPUT) |
+	  DSP_ZERO |
+	  DSP_XSEL_TEMP | DSP_TRA(TEMP_COMBINED_OUTPUT_DLY1) |
+	  DSP_YSEL_COEF | DSP_CRA(CRA_NEG1);
+/* DSP_BSEL_SFTREG | DSP_NEGB |		      //
+	  DSP_XSEL_TEMP | DSP_TRA(TEMP_EXCHIP_DLY5) | //
+	  DSP_YSEL_COEF | DSP_CRA(CRA_NEG1);	      //
+*/
+ *(m++) = DSP_EWT | DSP_EWA(EFREG_APU_OUTPUT) | // Pulse + Triangle+noise+PCM samples+expansion chip -> output
+	  DSP_BSEL_TEMP | DSP_TRA(TEMP_PCM_VALUE_PREV) |	// PCM channel value+delta->value
+	  DSP_XSEL_INPUTS | DSP_IRA(MIXS_NEG4096_SL11) |	// PCM channel value+delta->value
 	  DSP_YSEL_YREG11_23;					// PCM channel value+delta->value
 
  *(m++) = DSP_TWT | DSP_TWA(TEMP_PCM_VALUE) |			// PCM channel value+delta->value
@@ -1511,7 +1496,7 @@ COLD_SECTION static void init_scsp_part(void)
 	  DSP_YSEL_COEF | DSP_CRA_NEG1;
 
  *(m++) = DSP_BSEL_SFTREG | DSP_NEGB |
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_NEG4096_SL10) |
+	  DSP_XSEL_INPUTS | DSP_IRA(MIXS_NEG4096_SL10) |
 	  DSP_YSEL_FRCREG;
 
  *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(0x00 + (0 << 3)) |
@@ -1557,7 +1542,7 @@ COLD_SECTION static void init_scsp_part(void)
 	  DSP_YSEL_COEF | DSP_CRA_NEG1;
 
  *(m++) = DSP_BSEL_SFTREG | DSP_NEGB |
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_NEG4096_SL10) |
+	  DSP_XSEL_INPUTS | DSP_IRA(MIXS_NEG4096_SL10) |
 	  DSP_YSEL_FRCREG;
 
  *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(0x00 + (1 << 3)) |
@@ -1573,7 +1558,7 @@ COLD_SECTION static void init_scsp_part(void)
  //
  // Triangle phase accum:
  //
-          DSP_BSEL_TEMP | DSP_TRA(0x01 + (2 << 3)) |
+	  DSP_BSEL_TEMP | DSP_TRA(0x01 + (2 << 3)) |
 	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_TRI_FREQLO) |
 	  DSP_YSEL_COEF | DSP_CRA_1_DIV_256;
 
@@ -1609,6 +1594,11 @@ COLD_SECTION static void init_scsp_part(void)
 	  DSP_YSEL_YREG4_15;					// PTN FIFO position increment
 
  *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(TEMP_PTNFIFO_POS) |			// PTN FIFO position increment
+	  DSP_ZERO |								// Pulse0 base addr->EFREG
+	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_PULSE0_BASE) |				// Pulse0 base addr->EFREG
+	  DSP_YSEL_COEF | DSP_CRA_NEG1;						// Pulse0 base addr->EFREG
+
+ *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_EWT | DSP_EWA(EFREG_PULSE0_ADDR) |	// Pulse0 base addr->EFREG
 	  DSP_ZERO |
 	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_4096_SL5) |
 	  DSP_YSEL_FRCREG;
@@ -1619,7 +1609,7 @@ COLD_SECTION static void init_scsp_part(void)
 	  DSP_YSEL_COEF | DSP_CRA_NEG1;
 
  *(m++) = DSP_BSEL_SFTREG | DSP_NEGB |
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_NEG4096_SL10) |
+	  DSP_XSEL_INPUTS | DSP_IRA(MIXS_NEG4096_SL10) |
 	  DSP_YSEL_FRCREG;
 
  *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(0x00 + (2 << 3)) |
@@ -1641,10 +1631,15 @@ COLD_SECTION static void init_scsp_part(void)
 
  *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(0x00 + (3 << 3)) |
 	  DSP_ZERO |					// PCM quasi-nonlinear scale LUT
-	  DSP_XSEL_TEMP | DSP_TRA(TEMP_PCM_VALUE) |	// PCM quasi-nonlinear scale LUT
+	  DSP_XSEL_TEMP | DSP_TRA(TEMP_PCM_VALUE_DLY3) |// PCM quasi-nonlinear scale LUT
 	  DSP_YSEL_COEF | DSP_CRA_1_DIV_16;		// PCM quasi-nonlinear scale LUT
 
  *(m++) = DSP_ADRL | DSP_SHFT0 | DSP_SHFT1 |		// PCM quasi-nonlinear scale LUT
+	  DSP_ZERO |					// Pulse1 base addr->EFREG
+	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_PULSE1_BASE) | // Pulse1 base addr->EFREG
+	  DSP_YSEL_COEF | DSP_CRA_NEG1;			// Pulse1 base addr->EFREG
+
+ *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_EWT | DSP_EWA(EFREG_PULSE1_ADDR) | 	// Pulse1 base addr->EFREG
 	  DSP_ZERO |
 	  DSP_XSEL_TEMP | DSP_TRA(0x00 + (3 << 3)) |
 	  DSP_YSEL_COEF | DSP_CRA_1_DIV_16;
@@ -1662,10 +1657,11 @@ COLD_SECTION static void init_scsp_part(void)
  *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_FRCL | 
 	  DSP_ZERO |
 	  DSP_XSEL_TEMP | DSP_TRA(0x00 + (3 << 3)) |
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;
+	  DSP_YSEL_COEF | DSP_CRA_NEG1 |
+	  DSP_YRL | DSP_IRA(MEMS_NOISE_MODEMUL);				// Noise
 
  *(m++) = DSP_BSEL_SFTREG | DSP_NEGB |
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_NEG4096_SL10) |
+	  DSP_XSEL_INPUTS | DSP_IRA(MIXS_NEG4096_SL10) |
 	  DSP_YSEL_FRCREG;
 
  *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(0x00 + (3 << 3)) |
@@ -1678,109 +1674,46 @@ COLD_SECTION static void init_scsp_part(void)
 	  DSP_YSEL_FRCREG;
 
  *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(0x04 + (3 << 3)) |
- //
- //
- //
- //
- //
- //
- // Ok, so...at this point, for the current sample, the lower 15 bits of the
- // phase accumulator are in TEMP[0x01][14:0], and the upper 16 bits are in TEMP[0x05][23:8].
- //
- // We need to add the phase offset from MEMS[0x02] to the upper 24 bits,
- // logical right-shift it by 24 - 10 = 14, add the base address from MEMS[0x03],
- // and write the upper 16-bits to EFREG[EFREG_PULSE0B_ADDR].
- //
- // Then, do the same but without adding the phase offset, and write it to EFREG[EFREG_PULSE0A_ADDR].
- //
- // >> 12 with 1/4096 COEF, & 0xFFF -> FRC_REG(SHFT0=SHFT1=1), >> 2 with 1/4 MEMS constant(=1024?)
- //
- // Pulse 0-A
- //
- 	  DSP_ZERO |
-	  DSP_XSEL_TEMP | DSP_TRA(0x04 + (0 << 3)) |
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;
+	  DSP_ZERO |							// Triangle base addr->EFREG
+	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_TRI_BASE) |			// Triangle base addr->EFREG
+	  DSP_YSEL_COEF | DSP_CRA_NEG1;					// Triangle base addr->EFREG
 
- *(m++) = DSP_BSEL_SFTREG |
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_PULSE0_PHOFFSA) |
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;
-
- *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(TEMP_PULSE0A_FMOFFS) |
-	  DSP_ZERO |
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_PULSE0_BASE) |
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;
-
- *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_EWT | DSP_EWA(EFREG_PULSE0A_ADDR) |
+ *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_EWT | DSP_EWA(EFREG_TRI_ADDR);	// Triangle base addr->EFREG
  //
- // Pulse 0-B
  //
-	  DSP_ZERO |
-	  DSP_XSEL_TEMP | DSP_TRA(0x04 + (0 << 3)) |
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;
-
- *(m++) = DSP_BSEL_SFTREG |
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_PULSE0_PHOFFSB) |
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;
-
- *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(TEMP_PULSE0B_FMOFFS) |
-	  DSP_ZERO |
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_PULSE0_BASE) |
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;
-
- *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_EWT | DSP_EWA(EFREG_PULSE0B_ADDR) |
  //
- // Pulse 1-A
  //
-	  DSP_ZERO |
-	  DSP_XSEL_TEMP | DSP_TRA(0x04 + (1 << 3)) |
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;
-
- *(m++) = DSP_BSEL_SFTREG |
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_PULSE1_PHOFFSA) |
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;
-
- *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(TEMP_PULSE1A_FMOFFS) |
-	  DSP_ZERO |
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_PULSE1_BASE) |
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;
-
- *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_EWT | DSP_EWA(EFREG_PULSE1A_ADDR) | 
  //
- // Pulse 1-B
  //
-	  DSP_ZERO |
-	  DSP_XSEL_TEMP | DSP_TRA(0x04 + (1 << 3)) |
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;
-
- *(m++) = DSP_BSEL_SFTREG |
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_PULSE1_PHOFFSB) |
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;
-
- *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(TEMP_PULSE1B_FMOFFS) |
-	  DSP_ZERO |
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_PULSE1_BASE) |
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;
-
- *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_EWT | DSP_EWA(EFREG_PULSE1B_ADDR);
- //
- // Triangle
- //
-
- *(m++) = DSP_ZERO |
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_TRI_BASE) |
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;
-
- *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_EWT | DSP_EWA(EFREG_TRI_ADDR) |
- //
- // CFIFO position increment
- //
-	  DSP_BSEL_TEMP | DSP_TRA(TEMP_CFIFO_POS_PREV) |
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_4096_SL8) |
-	  DSP_YSEL_COEF | DSP_CRA_1_DIV_128;
-
- *(m++) = DSP_MWT | DSP_SHFT0 | DSP_SHFT1 | DSP_MASA(MADR_CFIFO_POSITION) | DSP_NOFL | DSP_TABLE |
-	  DSP_TWT | DSP_TWA(TEMP_CFIFO_POS);
  *(m++) = 0;
+
+ *(m++) = DSP_ZERO |								// Noise
+	  DSP_XSEL_TEMP | DSP_TRA(0x05 + (3 << 3)) |				// Noise
+	  DSP_YSEL_YREG11_23;							// Noise
+
+ *(m++) = DSP_BSEL_SFTREG | DSP_NEGB |						// Noise
+	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_NOISE_BASELO) | 			// Noise
+	  DSP_YSEL_COEF | DSP_CRA_NEG1;						// Noise
+
+ *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_EWT | DSP_EWA(EFREG_NOISE_ADDRLO) |	// Noise
+	  DSP_ZERO |								// Noise
+	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_NOISE_BASEHI) |			// Noise
+	  DSP_YSEL_COEF | DSP_CRA_NEG1;						// Noise
+
+ *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_EWT | DSP_EWA(EFREG_NOISE_ADDRHI);	// Noise
+
+ //
+ //
+ //
+ *(m++) = DSP_ZERO |
+	  DSP_XSEL_TEMP | DSP_TRA(TEMP_APU_OUTPUT) |
+	  DSP_YSEL_COEF | DSP_CRA(CRA_APU_VOLUME);
+
+ *(m++) = DSP_BSEL_SFTREG |
+	  DSP_XSEL_TEMP | DSP_TRA(TEMP_EXCHIP_DLY5) |
+	  DSP_YSEL_COEF | DSP_CRA(CRA_EXCHIP_VOLUME);
+
+ *(m++) = DSP_TWT | DSP_TWA(TEMP_COMBINED_OUTPUT_DLY0);
 
  //
  // Parameter FIFO reading:
@@ -1788,26 +1721,15 @@ COLD_SECTION static void init_scsp_part(void)
  *(m++) = DSP_ZERO |
 	  DSP_XSEL_TEMP | DSP_TRA(TEMP_PTNFIFO_POS) |
   	  DSP_YSEL_COEF | DSP_CRA_NEG1 |
-	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_PCM_QNLSCALE) | DSP_NOFL | DSP_TABLE | // PCM quasi-nonlinear scale LUT
-	  DSP_YRL | DSP_IRA(MEMS_NOISE_MODEMUL);				// Noise
- *(m++) = DSP_ADRL | DSP_SHFT0 | DSP_SHFT1 |
-	  DSP_ZERO |								// Noise
-	  DSP_XSEL_TEMP | DSP_TRA(0x05 + (3 << 3)) |				// Noise
-	  DSP_YSEL_YREG11_23;							// Noise
+	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_PCM_QNLSCALE) | DSP_NOFL | DSP_TABLE; // PCM quasi-nonlinear scale LUT
+ *(m++) = DSP_ADRL | DSP_SHFT0 | DSP_SHFT1;
 
  *(m++) = DSP_IWT | DSP_IWA(MEMS_PCM_QNLSCALE) |	// PCM quasi-nonlinear scale LUT
-	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_PTNFIFOA) | DSP_NOFL | DSP_TABLE |
-	  DSP_BSEL_SFTREG | DSP_NEGB |						// Noise
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_NOISE_BASELO) | 			// Noise
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;						// Noise
- *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_EWT | DSP_EWA(EFREG_NOISE_ADDRLO) |	// Noise
-	  DSP_ZERO |								// Noise
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_NOISE_BASEHI) |			// Noise
-	  DSP_YSEL_COEF | DSP_CRA_NEG1;						// Noise
+	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_PTNFIFOA) | DSP_NOFL | DSP_TABLE;
+ *(m++) = 0;
 
  *(m++) = DSP_IWT | DSP_IWA(MEMS_TEMP0) |
-	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_PTNFIFOA) | DSP_NXADDR | DSP_NOFL | DSP_TABLE |
-	  DSP_SHFT0 | DSP_SHFT1 | DSP_EWT | DSP_EWA(EFREG_NOISE_ADDRHI);	// Noise
+	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_PTNFIFOA) | DSP_NXADDR | DSP_NOFL | DSP_TABLE;
  *(m++) = 0;
 
  *(m++) = DSP_IWT | DSP_IWA(MEMS_TEMP1) |
@@ -1817,14 +1739,18 @@ COLD_SECTION static void init_scsp_part(void)
  *(m++) = DSP_IWT | DSP_IWA(MEMS_TEMP2) |
 	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_PTNFIFOB) | DSP_NXADDR | DSP_NOFL | DSP_TABLE |
 	  DSP_ZERO |
-	  DSP_XSEL_TEMP | DSP_TRA(TEMP_CFIFO_POS) |	// Get control FIFO
+	  DSP_XSEL_TEMP | DSP_TRA(TEMP_CFIFO_POS_PREV) |// Get control FIFO
   	  DSP_YSEL_COEF | DSP_CRA_1_DIV_2;		// position, and latch
- *(m++) = DSP_ADRL | DSP_SHFT0 | DSP_SHFT1 | 		// it as an address.
-	  DSP_ZERO |
+ *(m++) = DSP_ADRL | DSP_SHFT0 | DSP_SHFT1; 		// it as an address.
+
+ *(m++) = DSP_IWT | DSP_IWA(MEMS_TEMP3) |
+	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_EXCHIP) | DSP_NOFL | DSP_TABLE;		// EXCHIP
+
+ *(m++) = DSP_ZERO |
 	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_TEMP0) |
 	  DSP_YSEL_COEF | DSP_CRA_NEG1;
 
- *(m++) = DSP_IWT | DSP_IWA(MEMS_TEMP3) |
+ *(m++) = DSP_IWT | DSP_IWA(MEMS_EXCHIP) |						// EXCHIP
 	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_CFIFO) | DSP_NOFL | DSP_TABLE |
 	  DSP_BSEL_SFTREG | DSP_NEGB |
 	  DSP_YSEL_COEF | DSP_CRA_ZERO;
@@ -1841,16 +1767,16 @@ COLD_SECTION static void init_scsp_part(void)
 	  DSP_YSEL_COEF | DSP_CRA_1_DIV_2;			// Pulse 1 sample
  *(m++) = DSP_FRCL | DSP_SHFT1 |				// Pulse 1 sample
 	  DSP_ZERO |						// Pulse 0 sample
-	  DSP_XSEL_TEMP | DSP_TRA(TEMP_PULSE0_VOLDLY3) |	// Pulse 0 sample
+	  DSP_XSEL_TEMP | DSP_TRA(TEMP_PULSE0_VOLDLY2) |	// Pulse 0 sample
 	  DSP_YSEL_FRCREG;					// Pulse 0 sample
 
  *(m++) = DSP_IWT | DSP_IWA(MEMS_PULSE0_FREQLO) |
 	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_PULSE_FREQHI) | DSP_NOFL | DSP_TABLE |
 	  DSP_BSEL_SFTREG |					// Pulse 0 sample
-	  DSP_XSEL_TEMP | DSP_TRA(TEMP_PULSE1_VOLDLY3) |	// Pulse 1 sample
+	  DSP_XSEL_TEMP | DSP_TRA(TEMP_PULSE1_VOLDLY2) |	// Pulse 1 sample
 	  DSP_YSEL_FRCREG;					// Pulse 1 sample
 
- *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_EWT | DSP_EWA(EFREG_PULSE_PCM) | // Pulse 0+1 samples -> output
+ *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(TEMP_PULSES_SAMPLE) | // Pulse 0+1 samples -> TEMP[TEMP_PULSES_SAMPLE]
 	  DSP_ZERO |
 	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_TEMP1) |
 	  DSP_YSEL_COEF | DSP_CRA_NEG1;
@@ -1880,10 +1806,17 @@ COLD_SECTION static void init_scsp_part(void)
 	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_PULSE_BASE) | DSP_NOFL | DSP_TABLE |
 	  DSP_BSEL_SFTREG | DSP_NEGB |
 	  DSP_YSEL_COEF | DSP_CRA_ZERO;
- *(m++) = DSP_ADRL | DSP_SHFT0 | DSP_SHFT1;
+ *(m++) = DSP_ADRL | DSP_SHFT0 | DSP_SHFT1 |
+	  DSP_BSEL_TEMP | DSP_TRA(TEMP_CFIFO_POS_PREV) |			// CFIFO position increment
+	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_4096_SL8) |				// CFIFO position increment
+	  DSP_YSEL_COEF | DSP_CRA_1_DIV_128;					// CFIFO position increment
 
  *(m++) = DSP_IWT | DSP_IWA(MEMS_PULSE1_BASE) |
-	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_TRI_FREQLO) | DSP_NOFL | DSP_TABLE;
+	  DSP_MWT | DSP_SHFT0 | DSP_SHFT1 | DSP_MASA(MADR_CFIFO_POSITION) | DSP_NOFL | DSP_TABLE |	// CFIFO position increment
+	  DSP_TWT | DSP_TWA(TEMP_CFIFO_POS);								// CFIFO position increment
+ *(m++) = 0;
+
+ *(m++) = DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_TRI_FREQLO) | DSP_NOFL | DSP_TABLE;
  *(m++) = 0;
 
  *(m++) = DSP_IWT | DSP_IWA(MEMS_TRI_FREQLO) |
@@ -1891,24 +1824,54 @@ COLD_SECTION static void init_scsp_part(void)
  *(m++) = 0;
 
  *(m++) = DSP_IWT | DSP_IWA(MEMS_TRI_FREQHI) |
-	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_TRI_BASE) | DSP_NOFL | DSP_TABLE;
- *(m++) = DSP_ADRL | DSP_IRA(MEMS_TEMP3);
+	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_TRI_BASE) | DSP_NOFL | DSP_TABLE |
+	  DSP_ADRL | DSP_IRA(MEMS_TEMP3) |
+ 	  DSP_ZERO |						// Pulse 0-A FM offs
+	  DSP_XSEL_TEMP | DSP_TRA(0x04 + (0 << 3)) |		// Pulse 0-A FM offs
+	  DSP_YSEL_COEF | DSP_CRA_NEG1;				// Pulse 0-A FM offs
+ *(m++) = DSP_BSEL_SFTREG |					// Pulse 0-A FM offs
+	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_PULSE0_PHOFFSA) |	// Pulse 0-A FM offs
+	  DSP_YSEL_COEF | DSP_CRA_NEG1;				// Pulse 0-A FM offs
 
  *(m++) = DSP_IWT | DSP_IWA(MEMS_TRI_BASE) |
-	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_NOISE_MODEMUL) | DSP_NOFL | DSP_TABLE;
- *(m++) = 0;
+	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_NOISE_MODEMUL) | DSP_NOFL | DSP_TABLE |
+	  DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(TEMP_PULSE0A_FMOFFS) | // Pulse 0-A FM offs
+	  DSP_ZERO |						// Pulse 0-B FM offs
+	  DSP_XSEL_TEMP | DSP_TRA(0x04 + (0 << 3)) |		// Pulse 0-B FM offs
+	  DSP_YSEL_COEF | DSP_CRA_NEG1;				// Pulse 0-B FM offs
+ *(m++) = DSP_BSEL_SFTREG |					// Pulse 0-B FM offs
+	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_PULSE0_PHOFFSB) |	// Pulse 0-B FM offs
+	  DSP_YSEL_COEF | DSP_CRA_NEG1;				// Pulse 0-B FM offs
 
  *(m++) = DSP_IWT | DSP_IWA(MEMS_NOISE_MODEMUL) |
-	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_NOISE_FREQLO) | DSP_NOFL | DSP_TABLE;
- *(m++) = 0;
+	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_NOISE_FREQLO) | DSP_NOFL | DSP_TABLE |
+	  DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(TEMP_PULSE0B_FMOFFS) |	// Pulse 0-B FM offs
+	  DSP_ZERO |						// Pulse 1-A FM offs
+	  DSP_XSEL_TEMP | DSP_TRA(0x04 + (1 << 3)) |		// Pulse 1-A FM offs
+	  DSP_YSEL_COEF | DSP_CRA_NEG1;				// Pulse 1-A FM offs
+ *(m++) = DSP_BSEL_SFTREG |					// Pulse 1-A FM offs
+	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_PULSE1_PHOFFSA) |	// Pulse 1-A FM offs
+	  DSP_YSEL_COEF | DSP_CRA_NEG1;				// Pulse 1-A FM offs
 
  *(m++) = DSP_IWT | DSP_IWA(MEMS_NOISE_FREQLO) |
-	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_NOISE_FREQHI) | DSP_NOFL | DSP_TABLE;
- *(m++) = 0;
+	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_NOISE_FREQHI) | DSP_NOFL | DSP_TABLE |
+	  DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(TEMP_PULSE1A_FMOFFS) | // Pulse 1-A FM offs
+	  DSP_ZERO |						// Pulse 1-B FM offs
+	  DSP_XSEL_TEMP | DSP_TRA(0x04 + (1 << 3)) |		// Pulse 1-B FM offs
+	  DSP_YSEL_COEF | DSP_CRA_NEG1;				// Pulse 1-B FM offs
+ *(m++) = DSP_BSEL_SFTREG |					// Pulse 1-B FM offs
+	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_PULSE1_PHOFFSB) |	// Pulse 1-B FM offs
+	  DSP_YSEL_COEF | DSP_CRA_NEG1;				// Pulse 1-B FM offs
 
  *(m++) = DSP_IWT | DSP_IWA(MEMS_NOISE_FREQHI) |
-	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_NOISE_BASELO) | DSP_NOFL | DSP_TABLE;
- *(m++) = DSP_YRL | DSP_IRA(MEMS_TEMP3) |
+	  DSP_MRD | DSP_ADRGB | DSP_MASA(MADR_NOISE_BASELO) | DSP_NOFL | DSP_TABLE |
+	  DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(TEMP_PULSE1B_FMOFFS) | // Pulse 1-B FM offs
+	  DSP_ZERO |					// -MEMS_EXCHIP->TEMP_EXCHIP_DLY0
+	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_EXCHIP) |	// -MEMS_EXCHIP->TEMP_EXCHIP_DLY0
+	  DSP_YSEL_COEF | DSP_CRA_NEG1;			// -MEMS_EXCHIP->TEMP_EXCHIP_DLY0
+
+ *(m++) = DSP_TWT | DSP_TWA(TEMP_EXCHIP_DLY0) |		// -MEMS_EXCHIP->TEMP_EXCHIP_DLY0
+	  DSP_YRL | DSP_IRA(MEMS_TEMP3) |
 	  DSP_ZERO |
 	  DSP_XSEL_TEMP | DSP_TRA(0x05 + (2 << 3)) |
 	  DSP_YSEL_COEF | DSP_CRA_NEG1;
@@ -1921,7 +1884,7 @@ COLD_SECTION static void init_scsp_part(void)
 	  DSP_YSEL_YREG4_15;
  *(m++) = DSP_ADRL | DSP_SHFT0 | DSP_SHFT1 |
 	  DSP_ZERO |								// Pulse DC bias delay(constant)
-	  DSP_XSEL_INPUTS | DSP_IRA(MEMS_NEG4096_SL11) |			// Pulse DC bias delay(constant)
+	  DSP_XSEL_INPUTS | DSP_IRA(MIXS_NEG4096_SL11) |			// Pulse DC bias delay(constant)
 	  DSP_YSEL_COEF | DSP_CRA_NEG1;						// Pulse DC bias delay(constant)
 
  *(m++) = DSP_IWT | DSP_IWA(MEMS_NOISE_BASEHI) |
@@ -1953,7 +1916,7 @@ COLD_SECTION static void init_scsp_part(void)
 	  DSP_YSEL_COEF | DSP_CRA_1_DIV_2;		// Phase reset LUT
  *(m++) = DSP_FRCL | DSP_SHFT0 | DSP_SHFT1 |		// Phase reset LUT
 	  DSP_ZERO |					// Zero control FIFO word
-	  DSP_XSEL_TEMP | DSP_TRA(TEMP_CFIFO_POS) | 	// Zero control FIFO word
+	  DSP_XSEL_TEMP | DSP_TRA(TEMP_CFIFO_POS_PREV) |// Zero control FIFO word
   	  DSP_YSEL_COEF | DSP_CRA_1_DIV_2;		// Zero control FIFO word
 
  *(m++) = DSP_IWT | DSP_IWA(MEMS_PULSE1_PHOFFSA) |
@@ -2030,7 +1993,7 @@ COLD_SECTION static void init_scsp_part(void)
 
  *(m++) = DSP_MWT | DSP_SHFT0 | DSP_SHFT1 | DSP_MASA(MADR_PULSE0A_POSITION) | DSP_NOFL | DSP_TABLE |	// Pulse 0-A position(for FM)
 	  DSP_ZERO |					// PCM * PCM volume
-	  DSP_XSEL_TEMP | DSP_TRA(TEMP_PCM_VALUE) |	// PCM * PCM volume
+	  DSP_XSEL_TEMP | DSP_TRA(TEMP_PCM_VALUE_DLY3) |// PCM * PCM volume
 	  DSP_YSEL_COEF | DSP_CRA(CRA_PCM_VOLUME);	// PCM * PCM volume
  *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_TWT | DSP_TWA(TEMP___P_SAMPLE) | // PCM * PCM volume -> TEMP[TEMP___P_SAMPLE]
 	  DSP_ZERO |						// Pulse 0-B position(for FM)
@@ -2055,21 +2018,194 @@ COLD_SECTION static void init_scsp_part(void)
 	  DSP_XSEL_TEMP | DSP_TRA(TEMP_TNP_SAMPLE) |	// ((Triangle+noise) * qnlscale) + PCM) * qnlscale
 	  DSP_YSEL_YREG11_23;				// ((Triangle+noise) * qnlscale) + PCM) * qnlscale
 
- *(m++) = DSP_SHFT0 | DSP_SHFT1 | DSP_EWT | DSP_EWA(EFREG_TNP_PCM) | // Triangle+noise+PCM samples -> output
-	  DSP_YRL | DSP_IRA(MEMS_TEMP4);			// PCM channel value+delta->value
+ *(m++) = DSP_BSEL_SFTREG | DSP_NEGB |			//
+	  DSP_XSEL_TEMP | DSP_TRA(TEMP_PULSES_SAMPLE) |	//
+	  DSP_YSEL_COEF | DSP_CRA(CRA_NEG1) |		//
+	  DSP_YRL | DSP_IRA(MEMS_TEMP4);		// PCM channel value+delta->value
  //
  //
  //
 
 #if (APU_DEBUG)
- //printf("%u\n", (unsigned)(m - mprog));
+/*
+    9: (value slot for DSP MIXS input)
+       (((((9) * 2 - 9) % 64) * 16) / 16 * 2)+3 = 21
 
- assert((m - mprog) == 128);
+   11: Pulse 0-A waveform
+   12: Pulse 0-B waveform
+   13: Pulse 1-A waveform
+   14: Pulse 1-B waveform
 
- for(unsigned i = 0; i < 128; i += 2)
-  assert(!(mprog[i] & (DSP_MRD | DSP_MWT)));
+   15: Noise waveform
+
+   16: Triangle waveform
+*/
+ {
+  int pulse0_addr_i = -1;
+  int pulse1_addr_i = -1;
+  int tri_addr_i = -1;
+  int noise_addrhi_i = -1;
+  int noise_addrlo_i = -1;
+
+  printf("%u\n", (unsigned)(m - mprog));
+
+  for(unsigned i = 0; i < 128; i++)
+  {
+   assert((i & 1) || !(mprog[i] & (DSP_MRD | DSP_MWT)));
+   //
+   if(mprog[i] & DSP_MRD)
+   {
+    printf("Read: %u\n", i);
+   }
+
+   if(mprog[i] & DSP_MWT)
+   {
+    printf("Write: %u\n", i);
+   }
+
+   if(mprog[i] & DSP_EWT)
+   {
+    const unsigned ewa = (mprog[i] >> 24) & 0xF;
+
+    if(ewa == EFREG_PULSE0_ADDR)
+    {
+     assert(pulse0_addr_i == -1);
+     pulse0_addr_i = i;
+    }
+
+    if(ewa == EFREG_PULSE1_ADDR)
+    {
+     assert(pulse1_addr_i == -1);
+     pulse1_addr_i = i;
+    }
+
+    if(ewa == EFREG_TRI_ADDR)
+    {
+     assert(tri_addr_i == -1);
+     tri_addr_i = i;
+    }
+
+    if(ewa == EFREG_NOISE_ADDRHI)
+    {
+     assert(noise_addrhi_i == -1);
+     noise_addrhi_i = i;
+    }
+
+    if(ewa == EFREG_NOISE_ADDRLO)
+    {
+     assert(noise_addrlo_i == -1);
+     noise_addrlo_i = i;
+    }
+   }
+  }
+
+  assert(pulse0_addr_i != -1);
+  assert(pulse1_addr_i != -1);
+  assert(tri_addr_i != -1);
+  assert(noise_addrhi_i != -1);
+  assert(noise_addrlo_i != -1);
+
+  printf("pulse0: %3u\n", pulse0_addr_i);
+  printf("pulse1: %3u\n", pulse1_addr_i);
+  printf("tri: %3u\n", tri_addr_i);
+  printf("noise hi: %3u\n", noise_addrhi_i);
+  printf("noise lo: %3u\n", noise_addrlo_i);
+
+  assert((m - mprog) == 128);
+
+/*
+  FIXME
+
+  assert(pulse0_addr_i == (13 - 6) * 4);
+  assert(pulse1_addr_i == (15 - 6) * 4);
+  assert(tri_addr_i == (18 - 6) * 4);
+*/
+ }
 #endif
+}
 
+void apu_kill(void)
+{
+ SCSP_CREG_LO(0x00 << 1) = (0x00 << 0);	// MVOL to min
+
+ for(unsigned i = 0; i < 128; i++)
+  MPROG[i] = mprog[i] & ~(DSP_TWT | DSP_MWT | DSP_EWT);
+
+ scsp_wait_full_samples(4);
+ 
+ for(unsigned i = 0; i < 128; i++)
+  MPROG[i] = 0;
+
+ scsp_wait_full_samples(4);
+
+ for(unsigned i = 0; i < 0x800; i++)
+  dmc.cfifo[i] = 0;
+
+ for(unsigned i = 0; i < 0x1000; i++)
+ {
+  stuff.fifo_a[i] = 0;
+  stuff.fifo_b[i] = 0;
+ }
+
+ {
+  volatile int16* exb = apu_get_exchip_buffer();
+
+  for(unsigned i = 0; i < 0x800; i++)
+   exb[i] = 0;
+ }
+
+ for(unsigned i = 0; i < 128; i++)
+  TEMP[i] = 0;
+ //
+ //
+ MEMS[MEMS_PULSE0_FREQLO] = 0;
+ MEMS[MEMS_PULSE0_FREQHI] = 0;
+ MEMS[MEMS_PULSE0_PHOFFSA] = 0;
+ MEMS[MEMS_PULSE0_PHOFFSB] = 0;
+ MEMS[MEMS_PULSE0_BASE] = 0;
+ MEMS[MEMS_PULSE0_PHRST] = 0;
+
+ MEMS[MEMS_PULSE1_FREQLO] = 0;
+ MEMS[MEMS_PULSE1_FREQHI] = 0;
+ MEMS[MEMS_PULSE1_PHOFFSA] = 0;
+ MEMS[MEMS_PULSE1_PHOFFSB] = 0;
+ MEMS[MEMS_PULSE1_BASE] = 0;
+ MEMS[MEMS_PULSE1_PHRST] = 0;
+
+ MEMS[MEMS_TRI_FREQLO] = 0;
+ MEMS[MEMS_TRI_FREQHI] = 0;
+ MEMS[MEMS_TRI_BASE] = 0;
+
+ MEMS[MEMS_NOISE_FREQLO] = 0;
+ MEMS[MEMS_NOISE_FREQHI] = 0;
+ MEMS[MEMS_NOISE_BASELO] = 0;
+ MEMS[MEMS_NOISE_BASEHI] = 0;
+ MEMS[MEMS_NOISE_MODEMUL] = 0;
+
+ MEMS[MEMS_PCM_QNLSCALE] = 0;
+
+ MEMS[MEMS_TEMP0] = 0;
+ MEMS[MEMS_TEMP1] = 0;
+ MEMS[MEMS_TEMP2] = 0;
+ MEMS[MEMS_TEMP3] = 0;
+ MEMS[MEMS_TEMP4] = 0;
+ //
+ //
+ for(unsigned i = 0; i < 5; i++)
+  SCSP16(position_addr + (i << 1)) = 0;
+
+ SCSP16(cfifo_position_addr) = 0;
+ //
+ //
+ scsp_wait_full_samples(2);
+}
+
+COLD_SECTION static void init_scsp_part(void)
+{
+ apu_kill();
+ //
+ //
+ //
  //
  //
  //
@@ -2108,9 +2244,13 @@ COLD_SECTION static void init_scsp_part(void)
  SCSP_CREG_LO(0x00 << 1) = (0x0F << 0);	// MVOL to max
 }
 
-void apu_init(bool pal)
+void apu_init(bool pal, uint32 apu_volume)
 {
  init_scsp_part();
+
+ assert(apu_volume <= 65536);
+
+ COEF[CRA_APU_VOLUME] = DSP_MAKE_COEF(-((((4096 * apu_volume) >> 15) + 1) >> 1));
 
  stuff.fifo_offset = 0x2000 / 2;
  for(unsigned i = 0; i < 4; i++)
@@ -2146,6 +2286,17 @@ void apu_init(bool pal)
  debug.dmc_update_prev_timestamp = 0;
 #endif
 }
+
+uint32 apu_get_timestamp_scale(void)
+{
+ return dmc.timestamp_scale;
+}
+
+volatile int16* apu_get_exchip_buffer(void)
+{
+ return (volatile int16*)&SCSP16((((rbp_init << 12) + madrs_init[MADR_EXCHIP]) << 1) - (0x1000 / 2));
+}
+
 
 void apu_power(void)
 {

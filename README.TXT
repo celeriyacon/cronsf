@@ -1,8 +1,22 @@
 CroNSF is a basic NSF player for the Sega Saturn.
 
-Expansion sound chips and IRQs are not supported.
+Due to heavy reliance on SCSP functionality, including the SCSP DSP, CroNSF
+will not work properly on emulators with grossly-inaccurate SCSP emulation;
+run CroNSF on real hardware, Mednafen, or a recent version of srg320's
+MiSTer Saturn core.
 
-ROM data size is limited to 896KiB(the NSF format itself can support
+NSFs that require more than one expansion chip are not supported.  Emulation
+of NSFs that use expansion chips is far more susceptible to running out of
+CPU time if APU or expansion chip registers are written to excessively.
+The following expansion chips are supported, rendered on the slave CPU:
+	Konami VRC6
+	Namco 163 (support for reading phase accumulators is unimplemented)
+	Nintendo MMC5 (PCM read mode is not supported)
+	Sunsoft 5B (sans janky non-linear amplifier)
+
+IRQs are not supported.
+
+ROM data size is limited to 640KiB(the NSF format itself can support
 around 1MiB).
 
 The APU emulation is designed to sound decent with most
@@ -31,11 +45,52 @@ underflow and things will go haywire).
 
 --------------------------------------------------------------------------------
 
+General Controls:
+	Z - Toggle hires mode(ignored in hex viewer, which is always hires).
+	Start - Load selected file; Exit to file selector.
+
+
+File Selector Controls:
+	A - Load selected file/directory.
+	B - Ascend to parent directory.
+	C - Load file in hex viewer.
+
+	Up/Down - Scroll up/down, with wrapping.
+	X/Y - Scroll up/down by 12.
+	L/R - Scroll up/down by 84.
+
+
+NSF Player Controls:
+	A - Restart song.
+	B(hold) - Exit to file selector.
+
+	Left/Right - Change song -1/+1, with wrapping.
+	Up/Down - Change song -10/+10.
+	X/Y - Change song -50/+50.
+
+
+Hex/Text Viewer Controls:
+	B(hold) - Exit to file selector.
+
+	Up/Down - Scroll up/down.
+	X/Y - Scroll up/down by 12.
+	L/R - Scroll up/down by 84.
+
+
+--------------------------------------------------------------------------------
+
 Bundled NSFs can be replaced with the user's choice by generating a new
 ISO-9660 filesystem image to replace "cronsf-track2-nsfs.iso".  For nice
 filenames, generate the filesystem to "ISO 9660 level 4" or "ISO 9660:1999"
 specifications, as CroNSF currently supports neither Rock Ridge nor Joliet
 extensions.
+
+"cronsf-track1.iso" will also function as a bootable ROM cart image, in which
+case CroNSF will load NSFs from the first track of an inserted CD, rather
+than the second track.  For an entirely self-contained ROM cart image, build
+CroNSF from source code to generate a "cronsf.ss" image that will include all
+files in the "nsfs" subdirectory; the "cronsf.ss" file may also be used as
+a single-track bootable ISO-9660 CD image.
 
 --------------------------------------------------------------------------------
 

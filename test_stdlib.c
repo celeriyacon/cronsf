@@ -54,6 +54,9 @@ static void test_string(void)
   { "Test %2.3s too", "ABCDEFG", "Test ABC too" },
   { "Test %-4.3s too", "ABCDEFG", "Test ABC  too" },
   { "Test %-2.3s too", "ABCDEFG", "Test ABC too" },
+
+  { "%s", "", "" },
+  { "%s", "A", "A" },
  };
 
  for(size_t i = 0; i < sizeof(tvs) / sizeof(tvs[0]); i++)
@@ -86,6 +89,7 @@ static void test_int(void)
  } tvs[] =
  {
   { "%d", 0,			"0" },
+  { "%0d", 0,			"0" },
   { "%3d", 0,			"  0" },
   { "%03d", 0,			"000" },
   { "%d", -1,			"-1" },
@@ -97,6 +101,8 @@ static void test_int(void)
   { "% 03d", 1,			" 01" },
   { "% 03d", -1,		"-01" },
 
+  { "%.0d", 0,			"" },
+  { "%.0d", 1,			"1" },
   { "%.4d", 1,			"0001" },
   { "%.4d", -1,			"-0001" },
 
@@ -146,6 +152,8 @@ static void test_int(void)
 
 int main(int argc, char* argv[])
 {
+ printf("Start!\n");
+
  test_string();
  test_int();
 

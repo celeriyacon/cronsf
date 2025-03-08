@@ -2,7 +2,7 @@
 // Define to the maximum supported NSF ROM data size in memory, in bytes.
 // The size should be a multiple of 4096.
 //
-#define NSFCORE_MAX_ROM_SIZE 0xE0000
+#define NSFCORE_MAX_ROM_SIZE 0xA0000
 
 //
 // Define to (CPU Frequency / 44100 / 3) when running on the slave CPU so the APU<->SCSP time
@@ -25,3 +25,18 @@
 //
 // #define APU_DEBUG 1
 
+
+//
+// Define to 1 to enable rough benchmarking of expansion chip code.
+//
+// Don't enable this unless you know what you're doing, as it has timing effects which
+// can break the APU emulation.
+//
+// #define EXCHIP_BENCH 1
+
+
+//
+// Define to 1 to enable a pre-resampler sine sweep in the Namco 163 and
+// Sunsoft 5B code.
+//
+// #define EXCHIP_SINESWEEP 1

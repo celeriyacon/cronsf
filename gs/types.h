@@ -28,16 +28,6 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-typedef int8_t int8;
-typedef int16_t int16;
-typedef int32_t int32;
-typedef int64_t int64;
-
-typedef uint8_t uint8;
-typedef uint16_t uint16;
-typedef uint32_t uint32;
-typedef uint64_t uint64;
-
 #define INLINE inline	__attribute__((always_inline))
 
 #define UNLIKELY(v)	__builtin_expect((v) != 0, 0)
@@ -49,11 +39,26 @@ typedef uint64_t uint64;
 #define COLD_SECTION	__attribute__((section(".text.cold")))
 #define LORAM_BSS	__attribute__((section(".loram.bss")))
 #define LORAM_BSS_UNCACHED	__attribute__((section(".loram.bss.uncached")))
+#define HIRAM_BSS_UNCACHED	__attribute__((section(".hiram.bss.uncached")))
 #define VDP1_BSS_UNCACHED __attribute__((section(".vdp1.bss.uncached")))
 
 #define VDP2_BSS __attribute__((section(".vdp2.bss")))
 /* #define VDP2_BSS_UNCACHED __attribute__((section(".vdp2.bss.uncached"))) */
 
 #define ALIGN(n)	__attribute__((aligned(n)))
+
+#define MAY_ALIAS 	__attribute__((__may_alias__))
+
+typedef int8_t int8;
+typedef int16_t int16;
+typedef int32_t int32;
+typedef int64_t int64;
+
+typedef uint8_t uint8;
+typedef uint16_t uint16;
+typedef uint32_t uint32;
+typedef uint64_t uint64;
+
+typedef uint32_t MAY_ALIAS uint32_MA;
 
 #endif

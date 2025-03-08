@@ -1,7 +1,7 @@
 /*
  * cronsf.c
  *
- * Copyright (C) 2024 celeriyacon - https://github.com/celeriyacon
+ * Copyright (C) 2024-2025 celeriyacon - https://github.com/celeriyacon
  *
  * This software is provided 'as-is', without any express or implied
  * warranty.  In no event will the authors be held liable for any damages
@@ -80,13 +80,13 @@ static uint32 hex_num_lines;
 static uint32 hex_scroll;
 //
 //
-LORAM_BSS_UNCACHED static uint8 scsp_ram_ntsc_init[524288];
 VDP1_BSS_UNCACHED static uint8 scsp_ram_pal_init[524288];
 
 static const nsf_meta_t* nsf_meta;
 static uint8 nsf_song_number;
 
 static bool hires_mode;
+static bool hires_mode_save;	// For hex viewer.
 
 static uint16 buttons;
 static uint16 buttons_prev;
@@ -129,7 +129,10 @@ enum
 
 static volatile uint32 slave_buttons;
 
-static __attribute__((interrupt_handler)) void slave_vblank_interrupt(void)
+//
+// Branched to from _slave_vblank_interrupt_S in cronsf_s.S:
+//
+__attribute__((interrupt_handler)) void slave_vblank_interrupt(void)
 {
  if(!(SMPC_SF & 0x1))
  {
@@ -165,21 +168,35 @@ static __attribute__((interrupt_handler)) void slave_vblank_interrupt(void)
  //
  //
  //
- sh2_wait_approx(250000);
+ WTCSR_R;
+ WRITE_WTCSR(0x25);
 }
+
+void slave_wdt_interrupt_S(void);
+void slave_vblank_interrupt_S(void);
 
 static void slave_entry(void)
 {
  static uint32 slave_vbr[0x80];
 
  for(unsigned i = 0; i < 0x10; i++)
-  slave_vbr[0x40 + i] = (uint32)slave_vblank_interrupt;
+  slave_vbr[0x40 + i] = (uint32)slave_vblank_interrupt_S;
 
  sh2_set_sr(0xF0);
  sh2_set_vbr((uint32)slave_vbr);
+ //
+ //
+ WTCSR_R;
+ WRITE_WTCSR(0x00);
 
- sh2_set_sr(0x30);
- for(;;);
+ IPRA = 0x00F0;
+ VCRWDT = 0x7F00;
+ slave_vbr[0x7F] = (uint32)slave_wdt_interrupt_S;
+ //
+ //
+ sh2_set_sr(0x50);
+ //
+ nsfcore_slave_entry();
 }
 
 static void init_input(void)
@@ -272,8 +289,10 @@ static void player_draw_(bool hires_draw)
   gfx_draw_char(xb + 10, 1, 'F', 0x09);
  }
 
- if(nsf_meta->chip)
-  gfx_draw_text((w / 2 - 9), 13, w - (w / 2 - 9), " Unsupported chip! ", 0x40);
+ if(nsf_meta->chip_emulated != nsf_meta->chip)
+ {
+  gfx_draw_text((w / 2 - 9), 13, w - (w / 2 - 9), " Unsupported chip(s)! ", 0x40);
+ }
 }
 
 static void player_draw(void)
@@ -341,8 +360,8 @@ static bool run_player(void)
 
   delta += check_held(BUTTON_RIGHT);
   delta -= check_held(BUTTON_LEFT);
-  delta += 10 * check_held(BUTTON_UP);
-  delta -= 10 * check_held(BUTTON_DOWN);
+  delta += 10 * check_held(BUTTON_DOWN);
+  delta -= 10 * check_held(BUTTON_UP);
   delta += 50 * check_held(BUTTON_Y);
   delta -= 50 * check_held(BUTTON_X);
 
@@ -382,13 +401,17 @@ static bool run_player(void)
  return false;
 }
 
+static char error_message[80 + 1];
+
 static bool pop_filesel(void)
 {
  if(filesel_stack_offs > 0)
  {
   filesel_stack_t* fe = &filesel_stack[filesel_stack_offs - 1];
 
-  if(fsys_restore_cur_dir(fe->dir_lba, fe->dir_size, filter))
+  if(!fsys_restore_cur_dir(fe->dir_lba, fe->dir_size, filter))
+   snprintf(error_message, sizeof(error_message), "%s", fsys_get_error());
+  else
   {
    filesel_stack_offs--;
    //
@@ -437,7 +460,10 @@ static fsys_dir_entry_t* run_file_selector(void)
     if(push_filesel())
     {
      if(!fsys_change_dir(filesel_which, filter))
+     {
+      snprintf(error_message, sizeof(error_message), "%s", fsys_get_error());
       pop_filesel();
+     }
      else
      {
       filesel_which = 0;
@@ -765,8 +791,6 @@ static bool run_hex_viewer(void)
  return (buttons_held[BUTTON_START] == 2 || buttons_held[BUTTON_B] == 24);
 }
 
-static char error_message[80 + 1];
-
 static void draw_init_status(const char* format, ...)
 {
  const unsigned w = 40 << hires_mode;
@@ -795,6 +819,17 @@ static void draw_init_status(const char* format, ...)
   gfx_draw_text(w - slen, 14, slen, d, 0x08);
  }
 
+#if 0
+#ifdef __GNUC__
+ {
+  static const char gcc_version[] = "gcc " __VERSION__;
+  const size_t slen = strlen(gcc_version);
+
+  gfx_draw_text(0, 14, slen, gcc_version, 0x08);
+ }
+#endif
+#endif
+
  gfx_update_ntptr();
 }
 
@@ -812,6 +847,38 @@ static int nsfcore_seek(struct nsfcore_file_callb_t_* callb, int32 new_position)
 {
  return fsys_seek(new_position);
 }
+
+static int32 nsfcore_size(struct nsfcore_file_callb_t_* callb)
+{
+ return fsys_size();
+}
+
+static void nsfcore_make_fsys_callb(nsfcore_file_callb_t* callb)
+{
+ memset(callb, 0, sizeof(nsfcore_file_callb_t));
+
+ callb->read = nsfcore_read;
+ callb->tell = nsfcore_tell;
+ callb->seek = nsfcore_seek;
+ callb->size = nsfcore_size;
+}
+
+static bool do_cdb_init_stuff(void)
+{
+ draw_init_status("Authenticating disc...");
+
+ if(cdb_auth() < 0)
+ {
+  snprintf(error_message, sizeof(error_message), "Disc authentication failed!");
+  return false;
+ }    
+
+ draw_init_status("Initializing disc stream...");
+ cdb_stream_init();
+
+ return true;
+}
+
 
 int main(void)
 {
@@ -846,23 +913,29 @@ int main(void)
 
   if(buttons_held[BUTTON_Z] == 2)
   {
-   hires_mode = !hires_mode;
-   gfx_set_hires_mode(hires_mode);
+   if(phase != PHASE_HEX_VIEWER)
+   {
+    hires_mode = !hires_mode;
+    gfx_set_hires_mode(hires_mode);
+   }
   }
 
   if(error_message[0])
   {
+   const unsigned w = 40 << hires_mode;
+   const size_t s = strlen(error_message);
    //
-   unsigned w = 40 << hires_mode;
-   int x = (int)(w - strlen(error_message)) / 2;
-
-   if(x < 0)
-    x = 0;
-
    gfx_begin_draw(hires_mode);
 
-   gfx_draw_text(x, 7, w, error_message, 0x0C);
+   for(int y = 0; y <= (s / w); y++)
+   {
+    int x = (int)(w - s) / 2;
 
+    if(x < 0 || y > 0)
+     x = 0;
+
+    gfx_draw_text(x, 7 + y, w, error_message + (y * w), 0x0C);
+   }
    gfx_update_ntptr();
    //
    //
@@ -871,21 +944,31 @@ int main(void)
   }
   else if(phase == PHASE_INIT)
   {
-   draw_init_status("Authenticating disc...");
-   if(cdb_auth() < 0)
-   {
-    snprintf(error_message, sizeof(error_message), "Disc authentication failed!");
-    continue;
-   }    
+   const bool cart_fsys = (!bios_read_first_mode && !memcmp((uint8*)0x02000000 + 0x70, "CRONSF", 6));
 
-   draw_init_status("Initializing disc stream...");
-   cdb_stream_init();
-
-   draw_init_status("Loading track %u ISO file list...", 1);
-   if(!fsys_init(1, NULL))
+   if(cart_fsys)
    {
-    snprintf(error_message, sizeof(error_message), "Error loading track %u filesystem!", 1);
-    continue;
+    draw_init_status("Loading cart ISO file list...", 1);
+
+    if(!fsys_init(0, (uint8*)0x02000000, 48 * 1024 * 1024, filter))
+    {
+     snprintf(error_message, sizeof(error_message), "Error loading cart filesystem: %s", fsys_get_error());
+     continue;
+    }
+   }
+   else
+   {
+    if(!do_cdb_init_stuff())
+     continue;
+
+    draw_init_status("Loading track %u ISO file list...", 1);
+    {
+     if(!fsys_init(1, NULL, 0, NULL))
+     {
+      snprintf(error_message, sizeof(error_message), "Error loading track %u filesystem: %s", 1, fsys_get_error());
+      continue;
+     }
+    }
    }
    //
    //
@@ -898,6 +981,15 @@ int main(void)
    }
 
    gfx_load_font();
+   //
+   //
+   draw_init_status("Initializing NSF core...");
+
+   if(!nsfcore_init())
+   {
+    snprintf(error_message, sizeof(error_message), "Error initializing NSF core!");
+    continue;
+   }
 
    for(unsigned i = 0; i < 2; i++)
    {
@@ -910,30 +1002,83 @@ int main(void)
      snprintf(error_message, sizeof(error_message), "Error opening \"%s\"!", fname);
      goto init_error_continue;
     }
-   
-    if(fsys_read((i ? scsp_ram_pal_init : scsp_ram_ntsc_init), 524288) != 524288)
+
+    if(!i)
     {
-     snprintf(error_message, sizeof(error_message), "Error reading \"%s\"!", fname);
+     nsfcore_file_callb_t callb;
+
+     nsfcore_make_fsys_callb(&callb);
+
+     if(!nsfcore_load_scsp_bin(&callb))
+      goto init_error_continue;
+    }
+    else
+    {
+     if(fsys_read(scsp_ram_pal_init, 524288) != 524288)
+     {
+      snprintf(error_message, sizeof(error_message), "Error reading \"%s\"!", fname);
+      goto init_error_continue;
+     }
+    }
+   }
+   //
+   //
+   //
+   {
+    const char* fname = "exchip.bin";
+    nsfcore_file_callb_t callb;
+
+    nsfcore_make_fsys_callb(&callb);
+
+    draw_init_status("Loading \"%s\"...", fname);
+
+    if(!fsys_open(fname))
+    {
+     snprintf(error_message, sizeof(error_message), "Error opening \"%s\"!", fname);
+     goto init_error_continue;
+    }
+
+    if(!nsfcore_load_exchip_bin(&callb))
+    {
+     snprintf(error_message, sizeof(error_message), "Error loading \"%s\": %s", fname, nsfcore_get_error());
      goto init_error_continue;
     }
    }
-
-   draw_init_status("Initializing NSF core...");
-
-   if(!nsfcore_init())
+   //
+   //
+   //
    {
-    snprintf(error_message, sizeof(error_message), "Error initializing NSF core!");
-    continue;
-   }
-   //
-   //
-   //
-   draw_init_status("Loading track %u ISO file list...", 1);
+    const char* dir = "nsfs";
+    fsys_dir_entry_t* de = fsys_find_file(dir);
 
-   if(!fsys_init(2, filter))
-   {
-    snprintf(error_message, sizeof(error_message), "Error loading track %u filesystem!", 2);
-    continue;
+    if(de)
+    {
+     if(!fsys_change_dir_de(de, filter))
+     {
+      snprintf(error_message, sizeof(error_message), "Error changing directory to \"%s\": %s", dir, fsys_get_error());
+      continue;
+     }
+    }
+    else
+    {
+     unsigned nsf_track = 2;
+
+     if(cart_fsys)
+     {
+      if(!do_cdb_init_stuff())
+       continue;
+
+      nsf_track = 1;
+     }
+     //
+     draw_init_status("Loading track %u ISO file list...", nsf_track);
+
+     if(!fsys_init(nsf_track, NULL, 0, filter))
+     {
+      snprintf(error_message, sizeof(error_message), "Error loading track %u filesystem: %s", nsf_track, fsys_get_error());
+      continue;
+     }
+    }
    }
 
    phase = PHASE_FILE_SELECTOR;
@@ -946,7 +1091,12 @@ int main(void)
   else if(phase == PHASE_HEX_VIEWER)
   {
    if(run_hex_viewer())
+   {
     phase = PHASE_FILE_SELECTOR;
+    //
+    hires_mode = hires_mode_save;
+    gfx_set_hires_mode(hires_mode);
+   }
   }
   else if(phase == PHASE_FILE_SELECTOR)
   {
@@ -957,11 +1107,7 @@ int main(void)
     const bool is_nsf = (de->file_type == FILE_TYPE_NSF || de->file_type == FILE_TYPE_NSFE);
     nsfcore_file_callb_t callb;
 
-    memset(&callb, 0, sizeof(callb));
-    callb.read = nsfcore_read;
-    callb.tell = nsfcore_tell;
-    callb.seek = nsfcore_seek;
-    callb.priv = de;
+    nsfcore_make_fsys_callb(&callb);
 
     draw_init_status("Loading \"%s\"...", de->name);
 
@@ -970,7 +1116,13 @@ int main(void)
     else if(buttons & BUTTON_MASK_C)
     {
      if(load_hex(&callb))
+     {
+      hires_mode_save = hires_mode;
+      hires_mode = true;
+      gfx_set_hires_mode(hires_mode);
+      //
       phase = PHASE_HEX_VIEWER;
+     }
     }
     else if(!is_nsf)
     {
@@ -986,11 +1138,7 @@ int main(void)
      }
      else
      {
-      nsfcore_file_callb_t sbcallb;
- 
-      nsfcore_make_mem_callb(&sbcallb, (nsf_meta->pal ? scsp_ram_pal_init : scsp_ram_ntsc_init), 524288);
-
-      if(!nsfcore_load_scsp_bin(&sbcallb))
+      if(!nsfcore_swapload_scsp_bin(scsp_ram_pal_init))
       {
        snprintf(error_message, sizeof(error_message), "%s", nsfcore_get_error());
        nsfcore_close();

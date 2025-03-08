@@ -1,0 +1,5 @@
+90 0.bin
+80 font.bin
+70 scspntsc.bin
+60 scsppal.bin
+50 exchip.bin

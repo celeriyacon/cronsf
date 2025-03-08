@@ -7,9 +7,11 @@
 *.iso
 *.dis
 *.zip
+*.swp
 /gentables
 /bintoinc
 /madrs*.h
+/exchip_lut.h
 /nsfs/*
 !/nsfs/Tests
 !/font.bin
