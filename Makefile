@@ -4,13 +4,13 @@ CPPFLAGS=-D_GNU_SOURCE=1
 CPP=cpp
 #
 M68K_CC=m68k-unknown-elf-gcc
-M68K_CFLAGS=-Os -g -std=gnu99 -march=68000 -fwrapv -fsigned-char -fno-strict-aliasing -Wall -Werror -Werror="stack-usage=" -Werror=implicit-function-declaration -Wstack-usage=64
+M68K_CFLAGS=-Os -g -std=gnu99 -march=68000 -fwrapv -fsigned-char -ffreestanding -fno-strict-aliasing -Wall -Werror -Werror="stack-usage=" -Werror=implicit-function-declaration -Wstack-usage=64
 M68K_AS=m68k-unknown-elf-as
 M68K_ASFLAGS=-march=68000 -mcpu=68ec000
 M68K_OBJCOPY=m68k-unknown-elf-objcopy
 #
 SH2_CC=sh-elf-gcc
-SH2_CFLAGS=-O2 -std=gnu99 -m2 -fwrapv -fno-aggressive-loop-optimizations -fsigned-char -fno-inline -fno-unit-at-a-time -fno-common -fno-asynchronous-unwind-tables -Wall -Werror=implicit-function-declaration -Wstack-usage=192 -Istdlib
+SH2_CFLAGS=-O2 -std=gnu99 -m2 -fwrapv -ffreestanding -fno-aggressive-loop-optimizations -fsigned-char -fno-inline -fno-unit-at-a-time -fno-common -fno-asynchronous-unwind-tables -Wall -Werror=implicit-function-declaration -Wstack-usage=192 -Istdlib
 SH2_OBJCOPY=sh-elf-objcopy
 #
 #
@@ -105,8 +105,8 @@ sysarea.bin:	sys_ipl.bin sys_id.bin sys_sec.bin
 cronsf.o:	cronsf.c config.h version.h gfx.h fsys.h nsfcore.h gs/*.h
 		$(SH2_CC) $(SH2_CFLAGS) -o cronsf.o -c cronsf.c
 
-cronsf.elf:	cronsf.o cronsf_s.o gfx.o fsys.o nsfcore.o apu.o s6502.o vrc6.o sun5b.o n163.o mmc5.o cronsf.ld $(GS_OBJS) $(STDLIB_OBJS)
-		$(SH2_CC) $(SH2_CFLAGS) -nostdlib -Xlinker -Tcronsf.ld -o cronsf.elf cronsf.o cronsf_s.o gfx.o fsys.o nsfcore.o apu.o s6502.o vrc6.o sun5b.o n163.o mmc5.o $(GS_OBJS) $(STDLIB_OBJS) -lgcc
+cronsf.elf:	cronsf.o cronsf_s.o gfx.o fsys.o nsfcore.o apu.o s6502.o vrc6.o sun5b.o n163.o mmc5.o fds.o cronsf.ld $(GS_OBJS) $(STDLIB_OBJS)
+		$(SH2_CC) $(SH2_CFLAGS) -nostdlib -Xlinker -Tcronsf.ld -o cronsf.elf cronsf.o cronsf_s.o gfx.o fsys.o nsfcore.o apu.o s6502.o vrc6.o sun5b.o n163.o mmc5.o fds.o $(GS_OBJS) $(STDLIB_OBJS) -lgcc
 
 cronsf.bin:	cronsf.elf
 		$(SH2_OBJCOPY) -O binary -j HIRAM -j ".sun5b_reloc" cronsf.elf cronsf.bin
@@ -123,15 +123,18 @@ nsfs/Tests/test5b.nsfe:		test5b.asm
 nsfs/Tests/testmmc5.nsfe:	testmmc5.asm
 		xa -C -o nsfs/Tests/testmmc5.nsfe testmmc5.asm
 
+nsfs/Tests/testfds.nsfe:	testfds.asm
+		xa -C -o nsfs/Tests/testfds.nsfe testfds.asm
+
 cronsf-track1.iso:	Makefile sysarea.bin font.bin cronsf.bin scspntsc.bin scsppal.bin
 		xorrisofs $(XORRISOFS_TRACK1_FLAGS) -o cronsf-track1.iso /0.bin=cronsf.bin font.bin scspntsc.bin scsppal.bin exchip.bin
 
-cronsf-track2-nsfs.iso:	Makefile nsfs/Tests/testapu.nsfe nsfs/Tests/testvrc6.nsfe nsfs/Tests/test5b.nsfe nsfs/Tests/testmmc5.nsfe nsfs nsfs/* nsfs/*/*
+cronsf-track2-nsfs.iso:	Makefile nsfs/Tests/testapu.nsfe nsfs/Tests/testvrc6.nsfe nsfs/Tests/test5b.nsfe nsfs/Tests/testmmc5.nsfe nsfs/Tests/testfds.nsfe nsfs nsfs/* nsfs/*/*
 		xorrisofs $(XORRISOFS_TRACK2_FLAGS) -o cronsf-track2-nsfs.iso nsfs/
 
 cd-image:	cronsf-track1.iso cronsf-track2-nsfs.iso
 
-cronsf.ss:	Makefile sysarea.bin font.bin cronsf.bin scspntsc.bin scsppal.bin nsfs/Tests/testapu.nsfe nsfs/Tests/testvrc6.nsfe nsfs/Tests/test5b.nsfe nsfs/Tests/testmmc5.nsfe nsfs nsfs/* nsfs/*/*
+cronsf.ss:	Makefile sysarea.bin font.bin cronsf.bin scspntsc.bin scsppal.bin nsfs/Tests/testapu.nsfe nsfs/Tests/testvrc6.nsfe nsfs/Tests/test5b.nsfe nsfs/Tests/testmmc5.nsfe nsfs/Tests/testfds.nsfe nsfs nsfs/* nsfs/*/*
 		xorrisofs $(XORRISOFS_CART_FLAGS) -o cronsf.ss /0.bin=cronsf.bin font.bin scspntsc.bin scsppal.bin exchip.bin /nsfs=nsfs
 
 cart-image:	cronsf.ss

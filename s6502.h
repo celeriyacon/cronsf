@@ -90,15 +90,18 @@
 //
 //
 #define GBR_OFFS_EXCHIP_RB_WR 0x5E
+
+#define GBR_OFFS_NSF_BANK_REMAP_PTR 0x60
 //
 //
 //
 //
-#define GBR_OFFS_N163_RAM_PTR 0x60
-#define GBR_OFFS_N163_ADDR 0x64
-#define GBR_OFFS_N163_ADDR_INC 0x65
+#define GBR_OFFS_N163_MASTER 0x64
+#define GBR_OFFS_N163_RAM_PTR (GBR_OFFS_N163_MASTER + 0x0)
+#define GBR_OFFS_N163_ADDR (GBR_OFFS_N163_MASTER + 0x4)
+#define GBR_OFFS_N163_ADDR_INC (GBR_OFFS_N163_MASTER + 0x5)
 //
-#define GBR_OFFS_SUN5B_ADDR 0x66
+#define GBR_OFFS_SUN5B_ADDR 0x6A
 //
 #define GBR_OFFS_MMC5_MASTER 0x70
 #define GBR_OFFS_MMC5_MASTER_FRAME_DIVIDER (GBR_OFFS_MMC5_MASTER + 0x0)
@@ -111,6 +114,26 @@
 #define GBR_OFFS_MMC5_MASTER_MULT0 (GBR_OFFS_MMC5_MASTER + 0xA)
 #define GBR_OFFS_MMC5_MASTER_MULT1 (GBR_OFFS_MMC5_MASTER + 0xC)
 #define GBR_OFFS_MMC5_MASTER_MULT_RES (GBR_OFFS_MMC5_MASTER + 0xE)
+//
+#define GBR_OFFS_FDS_MASTER 0x80
+#define GBR_OFFS_FDS_MASTER_WTRAM_PTR (GBR_OFFS_FDS_MASTER + 0x00)
+#define GBR_OFFS_FDS_MASTER_WW_MVOL (GBR_OFFS_FDS_MASTER + 0x04)
+
+#define GBR_OFFS_FDS_MASTER_ENV_LEVEL_0 (GBR_OFFS_FDS_MASTER + 0x05)
+#define GBR_OFFS_FDS_MASTER_ENV_LEVEL_1 (GBR_OFFS_FDS_MASTER + 0x06)
+
+#define GBR_OFFS_FDS_MASTER_WT_CONTROL (GBR_OFFS_FDS_MASTER + 0x07)
+
+#define GBR_OFFS_FDS_MASTER_ENV_PRE_DIVIDER (GBR_OFFS_FDS_MASTER + 0x08)
+#define GBR_OFFS_FDS_MASTER_ENV_PRE_PERIOD (GBR_OFFS_FDS_MASTER + 0x0C)
+
+#define GBR_OFFS_FDS_MASTER_ENV_DIVIDER_0 (GBR_OFFS_FDS_MASTER + 0x0E)
+#define GBR_OFFS_FDS_MASTER_ENV_DIVIDER_1 (GBR_OFFS_FDS_MASTER + 0x0F)
+#define GBR_OFFS_FDS_MASTER_ENV_PERIOD_0 (GBR_OFFS_FDS_MASTER + 0x10)
+#define GBR_OFFS_FDS_MASTER_ENV_PERIOD_1 (GBR_OFFS_FDS_MASTER + 0x11)
+#define GBR_OFFS_FDS_MASTER_ENV_CONTROL_0 (GBR_OFFS_FDS_MASTER + 0x12)
+#define GBR_OFFS_FDS_MASTER_ENV_CONTROL_1 (GBR_OFFS_FDS_MASTER + 0x13)
+
 
 #if !__ASSEMBLER__
 //
@@ -152,8 +175,21 @@ extern void apu_read_4015_S(void);
 // branches will be broken).
 extern uintptr_t banks_4k[0x10];
 void bs2xxx_read_func_S(void);
+
+extern void bs5xxx_write_func_S(void);
 extern void bs6xxx_write_func_S(void);
 extern void bs7xxx_write_func_S(void);
+extern void bs8xxx_write_func_S(void);
+extern void bs9xxx_write_func_S(void);
+extern void bsAxxx_write_func_S(void);
+extern void bsBxxx_write_func_S(void);
+extern void bsCxxx_write_func_S(void);
+extern void bsDxxx_write_func_S(void);
+extern void bsExxx_write_func_S(void);
+extern void bsFxxx_write_func_S(void);
+extern void bsxxxx_write_func_S(void);
+
+extern void bs5xxx_read_func_S(void);
 extern void bs6xxx_read_func_S(void);
 extern void bs7xxx_read_func_S(void);
 extern void bs8xxx_read_func_S(void);
@@ -186,9 +222,21 @@ extern void mmc5_write_mult1_func_S(void);
 extern void mmc5_read_mult_res0_func_S(void);
 extern void mmc5_read_mult_res1_func_S(void);
 
+extern void fds_read_wtram_func_S(void);
+extern void fds_write_wtram_func_S(void);
+extern void fds_write_4080_func_S(void);
+extern void fds_write_4083_func_S(void);
+extern void fds_write_4084_func_S(void);
+extern void fds_write_4089_func_S(void);
+extern void fds_write_408A_func_S(void);
+extern void fds_write_X_func_S(void);
+extern void fds_read_4090_func_S(void);
+extern void fds_read_4092_func_S(void);
+
 
 extern uint8* nsf_rom_base;
 extern uint8 nsf_frame_pending;
+extern uint8* nsf_bank_remap_ptr;
 extern uint32 timestamp_base;
 extern uint32 fc_next_timestamp;
 extern uint32 dmc_end_timestamp;
@@ -220,6 +268,17 @@ extern struct
 
 typedef struct
 {
+ uint8* ram_ptr;
+ uint8 addr;
+ uint8 addr_inc;
+} n163_master_t;
+
+_Static_assert(__builtin_offsetof(n163_master_t, ram_ptr) == (GBR_OFFS_N163_RAM_PTR - GBR_OFFS_N163_MASTER), "Structure malformed.");
+_Static_assert(__builtin_offsetof(n163_master_t, addr) == (GBR_OFFS_N163_ADDR - GBR_OFFS_N163_MASTER), "Structure malformed.");
+_Static_assert(__builtin_offsetof(n163_master_t, addr_inc) == (GBR_OFFS_N163_ADDR_INC - GBR_OFFS_N163_MASTER), "Structure malformed.");
+
+typedef struct
+{
  uint32 frame_divider;
  uint8 envmode0;
  uint8 envmode1;
@@ -242,6 +301,42 @@ _Static_assert(__builtin_offsetof(mmc5_master_t, lc_enable) == (GBR_OFFS_MMC5_MA
 _Static_assert(__builtin_offsetof(mmc5_master_t, mult0) == (GBR_OFFS_MMC5_MASTER_MULT0 - GBR_OFFS_MMC5_MASTER), "Structure malformed.");
 _Static_assert(__builtin_offsetof(mmc5_master_t, mult1) == (GBR_OFFS_MMC5_MASTER_MULT1 - GBR_OFFS_MMC5_MASTER), "Structure malformed.");
 _Static_assert(__builtin_offsetof(mmc5_master_t, mult_res) == (GBR_OFFS_MMC5_MASTER_MULT_RES - GBR_OFFS_MMC5_MASTER), "Structure malformed.");
+
+typedef struct
+{
+ uintptr_t wtram_ptr;
+
+ int8 ww_mvol;
+
+ int8 env_level[2];
+
+ int8 wt_control;
+
+ int32 env_pre_divider;
+ int16 env_pre_period;	// +1) << 3
+
+ int8 env_divider[2];
+ int8 env_period[2];	// +1
+ int8 env_control[2];
+} fds_master_t;
+
+_Static_assert(__builtin_offsetof(fds_master_t, wtram_ptr) == (GBR_OFFS_FDS_MASTER_WTRAM_PTR - GBR_OFFS_FDS_MASTER), "Structure malformed.");
+_Static_assert(__builtin_offsetof(fds_master_t, ww_mvol) == (GBR_OFFS_FDS_MASTER_WW_MVOL - GBR_OFFS_FDS_MASTER), "Structure malformed.");
+
+_Static_assert(__builtin_offsetof(fds_master_t, env_pre_divider) == (GBR_OFFS_FDS_MASTER_ENV_PRE_DIVIDER - GBR_OFFS_FDS_MASTER), "Structure malformed.");
+_Static_assert(__builtin_offsetof(fds_master_t, env_pre_period) == (GBR_OFFS_FDS_MASTER_ENV_PRE_PERIOD - GBR_OFFS_FDS_MASTER), "Structure malformed.");
+
+_Static_assert(__builtin_offsetof(fds_master_t, wt_control) == (GBR_OFFS_FDS_MASTER_WT_CONTROL - GBR_OFFS_FDS_MASTER), "Structure malformed.");
+
+_Static_assert(__builtin_offsetof(fds_master_t, env_level[0]) == (GBR_OFFS_FDS_MASTER_ENV_LEVEL_0 - GBR_OFFS_FDS_MASTER), "Structure malformed.");
+_Static_assert(__builtin_offsetof(fds_master_t, env_level[1]) == (GBR_OFFS_FDS_MASTER_ENV_LEVEL_1 - GBR_OFFS_FDS_MASTER), "Structure malformed.");
+_Static_assert(__builtin_offsetof(fds_master_t, env_divider[0]) == (GBR_OFFS_FDS_MASTER_ENV_DIVIDER_0 - GBR_OFFS_FDS_MASTER), "Structure malformed.");
+_Static_assert(__builtin_offsetof(fds_master_t, env_divider[1]) == (GBR_OFFS_FDS_MASTER_ENV_DIVIDER_1 - GBR_OFFS_FDS_MASTER), "Structure malformed.");
+_Static_assert(__builtin_offsetof(fds_master_t, env_period[0]) == (GBR_OFFS_FDS_MASTER_ENV_PERIOD_0 - GBR_OFFS_FDS_MASTER), "Structure malformed.");
+_Static_assert(__builtin_offsetof(fds_master_t, env_period[1]) == (GBR_OFFS_FDS_MASTER_ENV_PERIOD_1 - GBR_OFFS_FDS_MASTER), "Structure malformed.");
+_Static_assert(__builtin_offsetof(fds_master_t, env_control[0]) == (GBR_OFFS_FDS_MASTER_ENV_CONTROL_0 - GBR_OFFS_FDS_MASTER), "Structure malformed.");
+_Static_assert(__builtin_offsetof(fds_master_t, env_control[1]) == (GBR_OFFS_FDS_MASTER_ENV_CONTROL_1 - GBR_OFFS_FDS_MASTER), "Structure malformed.");
+
 
 static INLINE void set_bank_4k(unsigned w, uint8* p)
 {

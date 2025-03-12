@@ -35,6 +35,7 @@
 #include "sun5b.h"
 #include "n163.h"
 #include "mmc5.h"
+#include "fds.h"
 
 #include "exchip.h"
 
@@ -48,13 +49,18 @@
 
 #define FOURCC(a, b, c, d) (((uint32)a << 24) | ((uint32)b << 16)  | (c << 8) | (d << 0))
 
-ALIGN(256) static uint8 rom[NSFCORE_MAX_ROM_SIZE];
+static ALIGN(256) uint8 bulk_mem[0x400 + 0x2000 + NSFCORE_MAX_ROM_SIZE];
+
+static uint8 (*const mmc5_exram)[0x400] = (uint8 (*)[0x400])(bulk_mem + 0);
+static uint8 (*const prgram)[0x2000] = (uint8 (*)[0x2000])(bulk_mem + sizeof(*mmc5_exram));
+static uint8 (*const rom)[NSFCORE_MAX_ROM_SIZE] = (uint8 (*)[NSFCORE_MAX_ROM_SIZE])(bulk_mem + sizeof(*mmc5_exram) + sizeof(*prgram));
+
 ALIGN(256) static uint8 shim_6502[0x1000] =
 {
  #include "shim_6502.bin.h"
 };
 
-ALIGN(256) static uint8 prgram[0x2000];
+static uint8 n163_ram[0x80];
 
 static uint32 time_fract;
 static int8 frame_alt;
@@ -65,6 +71,7 @@ static uint8 nsf_song_number;
 
 static uint8 nsf_initial_banks[8];
 static bool nsf_bs_enabled;
+static uint8 nsf_bank_remap[256];
 
 enum
 {
@@ -86,9 +93,11 @@ exchip_tables_t exchip_tables LORAM_BSS_UNCACHED;
 
 int16 exchip_resamp[256 * 40] __attribute__((aligned(16)));
 
+#if EXCHIP_BENCH
 HIRAM_BSS_UNCACHED volatile uint32 exchip_bench[8];
 HIRAM_BSS_UNCACHED volatile uint32 exchip_bench_rb_wr;
 static uint32 exchip_bench_rb_rd;
+#endif
 
 #if EXCHIP_SINESWEEP
 const int16 exchip_sintab[4096] =
@@ -107,13 +116,14 @@ COLD_SECTION const char* nsfcore_get_error(void)
 
 COLD_SECTION void* nsfcore_get_rom_ptr(size_t* max_size)
 {
- *max_size = sizeof(rom);
+ *max_size = sizeof(*rom);
 
- return rom;
+ return *rom;
 }
 
 void nsf_read_frame_pending_S(void);
 void nsf_set_bank_S(void);
+void nsf_set_bank_remap_S(void);
 
 static const uint8 iso88591_to_cp850[256] =
 {
@@ -229,7 +239,7 @@ COLD_SECTION static const nsf_meta_t* nsfe_load(nsfcore_file_callb_t* callb)
 	break;
 
    case FOURCC('D', 'A', 'T', 'A'):
-	if(nsf_load_addr < 0x8000)
+	if(!nsf_bs_enabled && nsf_load_addr < 0x8000)
 	{
 	 snprintf(error_message, sizeof(error_message), "Load address 0x%04X is unsupported.", nsf_load_addr);
 	 return NULL;
@@ -238,13 +248,13 @@ COLD_SECTION static const nsf_meta_t* nsfe_load(nsfcore_file_callb_t* callb)
 	{
 	 const uint32 rom_offs = (nsf_bs_enabled ? (nsf_load_addr & 0x0FFF) : (nsf_load_addr - 0x8000));
 
-	 if(sizeof(rom) < ((uint64)rom_offs + chunk_size))
+	 if(sizeof(*rom) < ((uint64)rom_offs + chunk_size))
 	 {
-	  snprintf(error_message, sizeof(error_message), "ROM data is too large by %llu bytes.", (unsigned long long)((uint64)rom_offs + chunk_size - sizeof(rom)));
+	  snprintf(error_message, sizeof(error_message), "ROM data is too large by %llu bytes.", (unsigned long long)((uint64)rom_offs + chunk_size - sizeof(*rom)));
 	  return NULL;
 	 }
 
-	 if(callb->read(callb, rom + rom_offs, chunk_size) != chunk_size)
+	 if(callb->read(callb, *rom + rom_offs, chunk_size) != chunk_size)
 	 {
 	  snprintf(error_message, sizeof(error_message), "Error reading NSFe \"%s\" chunk.", "DATA");
           return NULL;
@@ -342,6 +352,7 @@ static void adjust_mix_levels(void)
  const int max_vrc6_level = 0;
  const int max_n163_level = 1204;
  const int max_sun5b_level = -132;
+ const int max_fds_level = 700;	// Prevent combined APU+FDS clipping.
  int32 adj = 0;
 
  if(nsf_mix_levels[MIX_LEVEL_APU_SQUARE] > 0 && (adj < nsf_mix_levels[MIX_LEVEL_APU_SQUARE]))
@@ -358,6 +369,9 @@ static void adjust_mix_levels(void)
 
  if((meta.chip_emulated & CHIP_MASK_SUN5B) && nsf_mix_levels[MIX_LEVEL_SUN5B] > max_sun5b_level && (adj < (nsf_mix_levels[MIX_LEVEL_SUN5B] - max_sun5b_level)))
   adj = nsf_mix_levels[MIX_LEVEL_SUN5B] - max_sun5b_level;
+
+ if((meta.chip_emulated & CHIP_MASK_FDS) && nsf_mix_levels[MIX_LEVEL_FDS] > max_fds_level && (adj < (nsf_mix_levels[MIX_LEVEL_FDS] - max_fds_level)))
+  adj = nsf_mix_levels[MIX_LEVEL_FDS] - max_fds_level;
 
  if(adj > 0)
  {
@@ -429,7 +443,7 @@ COLD_SECTION static const nsf_meta_t* nsf_load(nsfcore_file_callb_t* callb)
 
  nsf_bs_enabled = (bool)read64_be(nsf_initial_banks);
 
- if(nsf_load_addr < 0x8000)
+ if(!nsf_bs_enabled && nsf_load_addr < 0x8000)
  {
   snprintf(error_message, sizeof(error_message), "Load address 0x%04X is unsupported.", nsf_load_addr);
   return NULL;
@@ -437,7 +451,7 @@ COLD_SECTION static const nsf_meta_t* nsf_load(nsfcore_file_callb_t* callb)
 
  const uint32 rom_offs = (nsf_bs_enabled ? (nsf_load_addr & 0x0FFF) : (nsf_load_addr - 0x8000));
 
- if(callb->read(callb, rom + rom_offs, sizeof(rom) - rom_offs) < 0)
+ if(callb->read(callb, *rom + rom_offs, sizeof(*rom) - rom_offs) < 0)
  {
   snprintf(error_message, sizeof(error_message), "Error reading NSF ROM data.");
   return NULL;
@@ -469,7 +483,7 @@ const nsf_meta_t* nsfcore_load(nsfcore_file_callb_t* callb)
  nsf_mix_levels[MIX_LEVEL_APU_SQUARE] = 0;
  nsf_mix_levels[MIX_LEVEL_VRC6] = 0;
  nsf_mix_levels[MIX_LEVEL_N163] = 1204;
- nsf_mix_levels[MIX_LEVEL_FDS] = 700;
+ nsf_mix_levels[MIX_LEVEL_FDS] = 760;
  nsf_mix_levels[MIX_LEVEL_MMC5] = 0;
  nsf_mix_levels[MIX_LEVEL_SUN5B] = -130;
 
@@ -506,6 +520,8 @@ const nsf_meta_t* nsfcore_load(nsfcore_file_callb_t* callb)
   meta.chip_emulated = CHIP_MASK_SUN5B;
  else if(meta.chip & CHIP_MASK_MMC5)
   meta.chip_emulated = CHIP_MASK_MMC5;
+ else if(meta.chip & CHIP_MASK_FDS)
+  meta.chip_emulated = CHIP_MASK_FDS;
  //
  //
  //
@@ -525,6 +541,29 @@ const nsf_meta_t* nsfcore_load(nsfcore_file_callb_t* callb)
 #define SET_WRITE(addr, p)			\
 {						\
  wfap[addr] = (uintptr_t)(p);			\
+}
+
+static void set_read_ir(size_t addr0, size_t addr1, void (*p)(void))
+{
+ intptr_t d = (intptr_t)(p) - (intptr_t)ram;
+
+ assert(!(d & 0x3));
+ assert(d >= -128 * 4 && d < 0);
+
+ d >>= 2;
+
+ do
+ {
+  rfap[addr0] = d;
+ } while(addr0++ != addr1);
+}
+
+static void set_write_ir(size_t addr0, size_t addr1, void (*p)(void))
+{
+ do
+ {
+  wfap[addr0] = (uintptr_t)p;
+ } while(addr0++ != addr1);
 }
 
 static void slave_write(uint16 timestamp, uint8 A, uint8 V)
@@ -639,6 +678,8 @@ static uint32 mb_to_linear_16_16(const int16 mb)
 
 COLD_SECTION static void emu_init(void)
 {
+ const bool fds = (bool)(meta.chip_emulated & CHIP_MASK_FDS);
+
  slave_stop();
  //printf("Song: %u\n", nsf_song_number);
  //printf("Init: 0x%04x\n", nsf_init_addr);
@@ -648,28 +689,71 @@ COLD_SECTION static void emu_init(void)
  time_fract = 0;
  timestamp_base = 0;
 
- nsf_rom_base = rom;
+ nsf_rom_base = *rom;
  nsf_frame_pending = 0x00;
 
  shim_6502[read16_le(shim_6502 + 0xFF2) & 0xFFF] = nsf_song_number;
  shim_6502[read16_le(shim_6502 + 0xFF4) & 0xFFF] = meta.pal; //nsf_pal;
  write16_le(shim_6502 + (read16_le(shim_6502 + 0xFF6) & 0xFFF), nsf_init_addr);
  write16_le(shim_6502 + (read16_le(shim_6502 + 0xFF8) & 0xFFF), nsf_play_addr);
- set_bank_32k(0x8, rom);
+ set_bank_32k(0x8, *rom);
+
+ set_bank_8k(0x6, *prgram);
+ //
+ //
+ set_write_ir(0x5FF6, 0x5FFF, ob_rw_func_S);
 
  if(nsf_bs_enabled)
  {
-  for(unsigned i = 0; i < 8; i++)
+  //
+  // When FDS emulation is enabled, remap banks to effect wrapping
+  // in order to prevent host memory corruption if an NSF selects a bank
+  // beyond the bounds of the ROM data array and then writes to it.
+  //
+  if(fds)
   {
-   set_bank_4k(0x8 + i, nsf_rom_base + (nsf_initial_banks[i] << 12)); // FIXME: non-power-of-2 max ROM data size
+   nsf_bank_remap_ptr = nsf_bank_remap;
+
+   for(unsigned i = 0; i < 256; i++)
+    nsf_bank_remap[i] = i % (NSFCORE_MAX_ROM_SIZE / 4096);
+   //
+   //
+   set_write_ir(0x5FF6, 0x5FFF, nsf_set_bank_remap_S);
+
+   for(unsigned i = 0; i < 8; i++)
+   {
+    set_bank_4k(0x8 + i, nsf_rom_base + (nsf_bank_remap[nsf_initial_banks[i]] << 12));
+
+    if(i >= 0x6)
+     set_bank_4k(i, nsf_rom_base + (nsf_bank_remap[nsf_initial_banks[i]] << 12));
+   }
+  }
+  else
+  {
+   set_write_ir(0x5FF8, 0x5FFF, nsf_set_bank_S);
+
+   for(unsigned i = 0; i < 8; i++)
+    set_bank_4k(0x8 + i, nsf_rom_base + (nsf_initial_banks[i] << 12));
   }
  }
 
- for(uint16 addr = 0x5FF8; addr < 0x6000; addr++)
+ if(fds)
  {
-  SET_WRITE(addr, nsf_bs_enabled ? nsf_set_bank_S : ob_rw_func_S);
- }
+  static void (*const f[8])(void) =
+  {
+   bs8xxx_write_func_S, bs9xxx_write_func_S, bsAxxx_write_func_S, bsBxxx_write_func_S,
+   bsCxxx_write_func_S, bsDxxx_write_func_S, bsExxx_write_func_S, bsFxxx_write_func_S
+  };
 
+  for(unsigned i = 0; i < 8; i++)
+   set_write_ir(0x8000 + (i << 12), 0x8FFF + (i << 12), f[i]);
+ }
+ else
+  set_write_ir(0x8000, 0xFFFF, ob_rw_func_S);
+ //
+ //
+ //
+ //
  if(meta.chip_emulated)
  {
   uint32 exchip_mix_level = 0;
@@ -686,6 +770,8 @@ COLD_SECTION static void emu_init(void)
   }
   else if(meta.chip_emulated & CHIP_MASK_N163)
   {
+   extern n163_master_t n163_master;
+
    exchip_slave_entry = n163_slave_entry;
    exchip_mix_level = nsf_mix_levels[MIX_LEVEL_N163];
 
@@ -699,6 +785,9 @@ COLD_SECTION static void emu_init(void)
    {
     SET_WRITE(addr, n163_write_f800_func_S);
    }
+
+   memset(n163_ram, 0, sizeof(n163_ram));
+   n163_master.ram_ptr = n163_ram;
   }
   else if(meta.chip_emulated & CHIP_MASK_SUN5B)
   {
@@ -739,6 +828,39 @@ COLD_SECTION static void emu_init(void)
 
    SET_READ(0x5205, mmc5_read_mult_res0_func_S);
    SET_READ(0x5206, mmc5_read_mult_res1_func_S);
+   //
+   //
+   memset(*mmc5_exram, 0, sizeof(*mmc5_exram));
+
+   assert(!((uintptr_t)*mmc5_exram & 0xFF));
+   banks_4k[0x5] = (uintptr_t)*mmc5_exram - 0x5C00;
+
+   set_read_ir (0x5C00, 0x5FF5, bs5xxx_read_func_S);
+   set_write_ir(0x5C00, 0x5FF5, bs5xxx_write_func_S);
+  }
+  else if(meta.chip_emulated & CHIP_MASK_FDS)
+  {
+   exchip_slave_entry = fds_slave_entry;
+   exchip_mix_level = nsf_mix_levels[MIX_LEVEL_FDS];
+
+   set_read_ir (0x4040, 0x407F, fds_read_wtram_func_S);
+   set_write_ir(0x4040, 0x407F, fds_write_wtram_func_S);
+
+   SET_WRITE(0x4080, fds_write_4080_func_S);
+   SET_WRITE(0x4082, fds_write_X_func_S);
+   SET_WRITE(0x4083, fds_write_4083_func_S);
+
+   SET_WRITE(0x4084, fds_write_4084_func_S);
+   SET_WRITE(0x4085, fds_write_X_func_S);
+   SET_WRITE(0x4086, fds_write_X_func_S);
+   SET_WRITE(0x4087, fds_write_X_func_S);
+
+   SET_WRITE(0x4088, fds_write_X_func_S);
+   SET_WRITE(0x4089, fds_write_4089_func_S);
+   SET_WRITE(0x408A, fds_write_408A_func_S);
+   //
+   SET_READ(0x4090, fds_read_4090_func_S);
+   SET_READ(0x4092, fds_read_4092_func_S);
   }
   //
   exchip_volume = ((int64)106 * 5424 * mb_to_linear_16_16(exchip_mix_level)) >> (16 + 7);
@@ -754,8 +876,11 @@ COLD_SECTION static void emu_init(void)
  if(meta.chip_emulated & CHIP_MASK_MMC5)
   mmc5_master_power();
 
+ if(meta.chip_emulated & CHIP_MASK_FDS)
+  fds_master_power();
+
  memset(ram, 0x00, sizeof(ram));
- memset(prgram, 0x00, sizeof(prgram));
+ memset(*prgram, 0x00, sizeof(*prgram));
 
  {
   uint8* p = (uint8*)(banks_4k[0xF] + 0xF000);
@@ -822,6 +947,9 @@ void nsfcore_run_frame(void)
    //
    if(meta.chip_emulated & CHIP_MASK_MMC5)
     mmc5_master_frame(timestamp);
+
+   if(meta.chip_emulated & CHIP_MASK_FDS)
+    fds_master_frame(timestamp);
    //
    //
    apu_frame(timestamp);
@@ -1068,8 +1196,6 @@ bool nsfcore_init(void)
  set_bank_4k(0x0, ram);
  set_bank_4k(0x1, ram);
 
- set_bank_8k(0x6, prgram);
-
  set_bank_4k(0x2, shim_6502);
  for(unsigned addr = 0x2000; addr < 0x3000; addr++)
   SET_READ(addr, bs2xxx_read_func_S);
@@ -1206,7 +1332,7 @@ void nsfcore_close(void)
  apu_kill();
  //
  memset(&meta, 0, sizeof(meta));
- memset(rom, 0, sizeof(rom));
+ memset(*rom, 0, sizeof(*rom));
 
  memset(nsf_initial_banks, 0x00, 8);
  nsf_play_addr = 0;

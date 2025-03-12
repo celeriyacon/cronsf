@@ -11,6 +11,7 @@ CPU time if APU or expansion chip registers are written to excessively.
 The following expansion chips are supported, rendered on the slave CPU:
 	Konami VRC6
 	Namco 163 (support for reading phase accumulators is unimplemented)
+	Nintendo FDS (test regs other than $4090 and $4092 are unsupported)
 	Nintendo MMC5 (PCM read mode is not supported)
 	Sunsoft 5B (sans janky non-linear amplifier)
 

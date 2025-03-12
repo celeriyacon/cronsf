@@ -401,7 +401,7 @@ static bool run_player(void)
  return false;
 }
 
-static char error_message[80 + 1];
+static char error_message[128 + 1];
 
 static bool pop_filesel(void)
 {

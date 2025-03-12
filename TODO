@@ -1,0 +1,1 @@
+Smooth out repeating -2/+2(and +2/-2) when DMC is running at its highest frequency, to mitigate aliasing.

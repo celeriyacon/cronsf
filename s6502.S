@@ -46,6 +46,7 @@
 
 .global _nsf_read_frame_pending_S
 .global _nsf_set_bank_S
+.global _nsf_set_bank_remap_S
 
 .global _vrc6_write_func_S
 .global _n163_write_f800_func_S
@@ -69,9 +70,33 @@
 .global _mmc5_read_mult_res0_func_S
 .global _mmc5_read_mult_res1_func_S
 
+.global _fds_read_wtram_func_S
+.global _fds_write_wtram_func_S
+.global _fds_write_4080_func_S
+.global _fds_write_4083_func_S
+.global _fds_write_4084_func_S
+.global _fds_write_4089_func_S
+.global _fds_write_408A_func_S
+.global _fds_write_X_func_S
+.global _fds_read_4090_func_S
+.global _fds_read_4092_func_S
+
+
 .global _bs2xxx_read_func_S
+.global _bs5xxx_write_func_S
 .global _bs6xxx_write_func_S
 .global _bs7xxx_write_func_S
+.global _bs8xxx_write_func_S
+.global _bs9xxx_write_func_S
+.global _bsAxxx_write_func_S
+.global _bsBxxx_write_func_S
+.global _bsCxxx_write_func_S
+.global _bsDxxx_write_func_S
+.global _bsExxx_write_func_S
+.global _bsFxxx_write_func_S
+.global _bsxxxx_write_func_S
+
+.global _bs5xxx_read_func_S
 .global _bs6xxx_read_func_S
 .global _bs7xxx_read_func_S
 .global _bs8xxx_read_func_S
@@ -390,6 +415,55 @@ reset_vector_addr:
 .align 4
 writehandler_region_start:
 
+.align 2
+_nsf_set_bank_S:
+	extu.b REG_DATA_BUS, r2
+	mov REG_ADDR, r0
+
+	and #0x0F, r0
+	sub r0, r2
+
+	shll8 r2
+	shll2 r2
+
+	shll2 r2
+	mov r0, r1
+
+	mov.l @(GBR_OFFS_NSF_ROM_BASE, GBR), r0
+	add r0, r2
+
+	stc GBR, r0
+	shll2 r1
+
+	rts
+	mov.l r2, @(r0, r1)
+
+.align 2
+_nsf_set_bank_remap_S:
+	mov.l @(GBR_OFFS_NSF_BANK_REMAP_PTR, GBR), r0
+	extu.b REG_DATA_BUS, r2
+
+	mov.b @(r0, r2), r2
+	mov REG_ADDR, r0
+
+	and #0x0F, r0
+	sub r0, r2
+
+	shll8 r2
+	shll2 r2
+
+	shll2 r2
+	mov r0, r1
+
+	mov.l @(GBR_OFFS_NSF_ROM_BASE, GBR), r0
+	add r0, r2
+
+	stc GBR, r0
+	shll2 r1
+
+	rts
+	mov.l r2, @(r0, r1)
+
 // exchip_rb must start on a 65536-byte boundary.
 .align 2
 _vrc6_write_func_S:
@@ -492,6 +566,7 @@ _n163_write_f800_func_S:
 	rts
 	mov.b r0, @(GBR_OFFS_N163_ADDR_INC, GBR)
 
+.align 2
 _n163_write_4800_func_S:
 	mov.b @(GBR_OFFS_N163_ADDR, GBR), r0
 	extu.b REG_DATA_BUS, r3
@@ -558,6 +633,7 @@ _mmc5_write_mult0_func_S:
 	rts
 	mov.w r0, @(GBR_OFFS_MMC5_MASTER_MULT_RES, GBR)
 
+.align 2
 _mmc5_write_mult1_func_S:
 	mov.w @(GBR_OFFS_MMC5_MASTER_MULT0, GBR), r0
 	sts MACL, r2
@@ -600,8 +676,11 @@ mmc5_update_shim:
 	mov.l @(GBR_OFFS_TIMESTAMP_BASE, GBR), r0
 	extu.b REG_DATA_BUS, REG_DATA_BUS
 
+	mov.l r3, @-r15
 	jsr @r1
 	add r0, r4
+
+	mov.l @r15+, r3
 	//
 	// Restore S6502 registers:
 	//
@@ -618,7 +697,7 @@ mmc5_update_shim:
 	mov.l @r2+, REG_ADDR
 
 	mov.l @r2+, REG_PC_BASE
-	rts
+	jmp @r3
 	mov.l @r2+, REG_CYC_CNT
 .align 2
 1: .long _mmc5_master_update_counters
@@ -636,24 +715,20 @@ mmc5_update_shim:
 	bf/s 1f
 	//
 	//
-	mova mmc5_pr_spill+4, r0
-	sts.l pr, @-r0
-	//
-	//
-
-	bsr mmc5_update_shim
+	mova 1f, r0
+	bra mmc5_update_shim
+	mov r0, r3
 	nop
-
-
-	//
-	//
-	mova mmc5_pr_spill, r0
-	lds.l @r0+, pr
 	//
 	//
 	1:
 .endm
 
+.align 2
+_bs5xxx_write_func_S:
+	mov.l @(0x5 * 4, GBR), r0
+	rts
+	mov.b REG_DATA_BUS, @(r0, REG_ADDR)
 
 .align 2
 _mmc5_write0_func_S:
@@ -665,6 +740,7 @@ _mmc5_write0_func_S:
 	bra _mmc5_writeX_func_S
 	mov.b r0, @(GBR_OFFS_MMC5_MASTER_ENVMODE0, GBR)
 
+.align 2
 _mmc5_write4_func_S:
 	CHECK_UPDATE_MMC5_FRAME
 	//
@@ -674,6 +750,7 @@ _mmc5_write4_func_S:
 	bra _mmc5_writeX_func_S
 	mov.b r0, @(GBR_OFFS_MMC5_MASTER_ENVMODE1, GBR)
 
+.align 2
 _mmc5_write3_func_S:
 	CHECK_UPDATE_MMC5_FRAME
 	//
@@ -702,6 +779,7 @@ _mmc5_write3_func_S:
 	bra _mmc5_writeX_func_S
 	mov.b r0, @(GBR_OFFS_MMC5_MASTER_LENGTH_COUNTER0, GBR)
 
+.align 2
 _mmc5_write7_func_S:
 	CHECK_UPDATE_MMC5_FRAME
 	//
@@ -790,6 +868,326 @@ _mmc5_write_status_func_S:
 //
 //
 //
+.align 2
+fds_update_shim:
+	//
+	// Save S6502 registers:
+	//
+	mov.l @(s_abi_spill_bottom_addr - gbr_area, GBR), r0
+	mov.l REG_CYC_CNT, @-r0
+
+	mov.l REG_PC_BASE, @-r0
+	mov.l REG_ADDR, @-r0
+
+	sts.l pr, @-r0
+	mov.l REG_DATA_BUS, @-r0
+	//
+	//
+	//
+	mov.l @(sp_save - gbr_area, GBR), r0
+	nop
+	//
+	mov.l 1f, r1
+	mov r0, r15
+	//
+	//
+	mov.l @(GBR_OFFS_TIMESTAMP_BASE, GBR), r0
+	extu.b REG_DATA_BUS, REG_DATA_BUS
+
+	mov.l r3, @-r15
+	jsr @r1
+	add r0, r4
+
+	mov.l @r15+, r3
+	//
+	// Restore S6502 registers:
+	//
+	mov.l 5f, r2
+	mov.l 6f, r0
+
+	lds.l @r2+, SREG_WFAP
+	mov r0, REG_RAM
+
+	lds.l @r2+, SREG_RFAP
+	mov.l @r2+, REG_DATA_BUS
+
+	lds.l @r2+, pr
+	mov.l @r2+, REG_ADDR
+
+	mov.l @r2+, REG_PC_BASE
+	jmp @r3
+	mov.l @r2+, REG_CYC_CNT
+.align 2
+1: .long _fds_master_update_counters
+5: .long s_abi_spill_partial_top
+6: .long _ram
+
+
+.macro CHECK_UPDATE_FDS_ENV
+	mov.l @(GBR_OFFS_TIMESTAMP_BASE, GBR), r0
+	mov REG_CYC_CNT, r3
+
+	add r0, r3
+	mov.l @(GBR_OFFS_FDS_MASTER_ENV_PRE_DIVIDER, GBR), r0
+
+	cmp/ge r0, r3
+	bf/s 40294f
+	//
+	//
+	mova 40294f, r0
+	bra fds_update_shim
+	mov r0, r3
+	nop
+	//
+	//
+	40294:
+.endm
+
+.align 2
+_fds_write_wtram_func_S:
+	mov.b @(GBR_OFFS_FDS_MASTER_WW_MVOL, GBR), r0
+	nop
+
+	tst #0x80, r0
+	bt/s wtram_nowr
+	mov.l @(GBR_OFFS_FDS_MASTER_WTRAM_PTR, GBR), r0
+	bra _fds_write_X_func_S
+	mov.b REG_DATA_BUS, @(r0, REG_ADDR)
+wtram_nowr:
+	rts
+	nop
+//
+.align 2
+_fds_write_4080_func_S:
+	CHECK_UPDATE_FDS_ENV
+	//
+	//
+	//
+	extu.b REG_DATA_BUS, r0
+	tst #0x80, r0
+
+	mov.b r0, @(GBR_OFFS_FDS_MASTER_ENV_CONTROL_0, GBR)
+	and #0x3F, r0
+
+	bt/s 1f
+	nop
+
+	mov.b r0, @(GBR_OFFS_FDS_MASTER_ENV_LEVEL_0, GBR)
+1:
+	add #1, r0
+
+	mov.b r0, @(GBR_OFFS_FDS_MASTER_ENV_PERIOD_0, GBR)
+	bra _fds_write_X_func_S
+	mov.b r0, @(GBR_OFFS_FDS_MASTER_ENV_DIVIDER_0, GBR)
+
+.align 2
+_fds_write_4083_func_S:
+	CHECK_UPDATE_FDS_ENV
+	//
+	//
+	//
+	extu.b REG_DATA_BUS, r0
+	bra _fds_write_X_func_S
+	mov.b r0, @(GBR_OFFS_FDS_MASTER_WT_CONTROL, GBR)
+
+.align 2
+_fds_write_4084_func_S:
+	CHECK_UPDATE_FDS_ENV
+	//
+	//
+	//
+	extu.b REG_DATA_BUS, r0
+	tst #0x80, r0
+
+	mov.b r0, @(GBR_OFFS_FDS_MASTER_ENV_CONTROL_1, GBR)
+	and #0x3F, r0
+
+	bt/s 1f
+	nop
+
+	mov.b r0, @(GBR_OFFS_FDS_MASTER_ENV_LEVEL_1, GBR)
+1:
+	add #1, r0
+
+	mov.b r0, @(GBR_OFFS_FDS_MASTER_ENV_PERIOD_1, GBR)
+	bra _fds_write_X_func_S
+	mov.b r0, @(GBR_OFFS_FDS_MASTER_ENV_DIVIDER_1, GBR)
+
+.align 2
+_fds_write_4089_func_S:
+	CHECK_UPDATE_FDS_ENV
+	//
+	//
+	//
+	extu.b REG_DATA_BUS, r0
+	bra _fds_write_X_func_S
+	mov.b r0, @(GBR_OFFS_FDS_MASTER_WW_MVOL, GBR)
+
+.align 2
+_fds_write_408A_func_S:
+	CHECK_UPDATE_FDS_ENV
+	//
+	//
+	//
+	extu.b REG_DATA_BUS, r0
+	add #1, r0
+
+	shll2 r0
+	shll r0
+
+	bra _fds_write_X_func_S
+	mov.w r0, @(GBR_OFFS_FDS_MASTER_ENV_PRE_PERIOD, GBR)
+
+//
+.align 2
+_fds_write_X_func_S:
+	mov.l @(GBR_OFFS_TIMESTAMP_BASE, GBR), r0
+	mov REG_CYC_CNT, r3
+
+	mov.l 1f, r1 //exchip_rb_ptr, r1
+	add r0, r3
+
+	mov.w @(GBR_OFFS_EXCHIP_RB_WR, GBR), r0
+	extu.b REG_ADDR, r2
+
+	extu.w r0, r0
+	add r0, r1
+
+	mov.w r3, @r1
+	add #2, r1
+	//
+	swap.b r2, r2
+	extu.b REG_DATA_BUS, r0
+
+	or r0, r2
+	nop
+
+	mov.w r2, @r1
+	add #2, r1
+
+	mov r1, r0
+	rts
+	mov.w r0, @(GBR_OFFS_EXCHIP_RB_WR, GBR)
+
+.align 2
+1: .long _exchip_rb
+//
+//
+//
+
+.align 2
+_bs8xxx_write_func_S:
+	mov.l @(0x8 * 4, GBR), r0
+	rts
+	mov.b REG_DATA_BUS, @(r0, REG_ADDR)
+
+.align 2
+_bs9xxx_write_func_S:
+	mov.l @(0x9 * 4, GBR), r0
+	rts
+	mov.b REG_DATA_BUS, @(r0, REG_ADDR)
+
+.align 2
+_bsAxxx_write_func_S:
+	mov.l @(0xA * 4, GBR), r0
+	rts
+	mov.b REG_DATA_BUS, @(r0, REG_ADDR)
+
+.align 2
+_bsBxxx_write_func_S:
+	mov.l @(0xB * 4, GBR), r0
+	rts
+	mov.b REG_DATA_BUS, @(r0, REG_ADDR)
+
+.align 2
+_bsCxxx_write_func_S:
+	mov.l @(0xC * 4, GBR), r0
+	rts
+	mov.b REG_DATA_BUS, @(r0, REG_ADDR)
+
+.align 2
+_bsDxxx_write_func_S:
+	mov.l @(0xD * 4, GBR), r0
+	rts
+	mov.b REG_DATA_BUS, @(r0, REG_ADDR)
+
+.align 2
+_bsExxx_write_func_S:
+	mov.l @(0xE * 4, GBR), r0
+	rts
+	mov.b REG_DATA_BUS, @(r0, REG_ADDR)
+
+.align 2
+_bsFxxx_write_func_S:
+	mov.l @(0xF * 4, GBR), r0
+	rts
+	mov.b REG_DATA_BUS, @(r0, REG_ADDR)
+
+.align 2
+_bsxxxx_write_func_S:
+	stc GBR, r1
+	swap.b REG_ADDR, r0
+
+	shlr2 r0
+	and #0x3C, r0
+
+	mov.l @(r0, r1), r0
+	rts
+	mov.b REG_DATA_BUS, @(r0, REG_ADDR)
+//
+//
+.align 4
+_s6502_write_shim_S:
+	//
+	// Save S6502 registers:
+	//
+	mov.l @(s_abi_spill_bottom_addr - gbr_area, GBR), r0
+	mov.l REG_CYC_CNT, @-r0
+
+	mov.l REG_PC_BASE, @-r0
+	mov.l REG_ADDR, @-r0
+
+	sts.l pr, @-r0
+	mov.l REG_DATA_BUS, @-r0
+	//
+	//
+	//
+	mov.l @(sp_save - gbr_area, GBR), r0
+	extu.w REG_ADDR, REG_ADDR
+	//
+	mov.l 1f, r1
+	mov r0, r15
+	//
+	//
+	mov.l @(GBR_OFFS_TIMESTAMP_BASE, GBR), r0
+	extu.b REG_DATA_BUS, REG_DATA_BUS
+
+	jsr @r1
+	add r0, r4
+	//
+	// Restore S6502 registers:
+	//
+	mov.l 5f, r2
+	mova _ram, r0
+
+	lds.l @r2+, SREG_WFAP
+	mov r0, REG_RAM
+
+	lds.l @r2+, SREG_RFAP
+	mov.l @r2+, REG_DATA_BUS
+
+	lds.l @r2+, pr
+	mov.l @r2+, REG_ADDR
+
+	mov.l @r2+, REG_PC_BASE
+	rts
+	mov.l @r2+, REG_CYC_CNT
+.align 2
+1: .long _apu_write
+5: .long s_abi_spill_partial_top
+//
+//
+//
 //
 //
 //
@@ -799,6 +1197,40 @@ _mmc5_write_status_func_S:
 .align 8
 memhandler_region_start:
 
+.align 2
+_fds_read_wtram_func_S:
+	mov.l @(GBR_OFFS_FDS_MASTER_WTRAM_PTR, GBR), r0
+	rts
+	mov.b @(r0, REG_ADDR), REG_DATA_BUS
+
+.align 2
+_fds_read_4090_func_S:
+	CHECK_UPDATE_FDS_ENV
+	//
+	//
+	//
+	mov #0xFFFFFFC0, r1
+	and r1, REG_DATA_BUS
+
+	mov.b @(GBR_OFFS_FDS_MASTER_ENV_LEVEL_0, GBR), r0
+	rts
+	or r0, REG_DATA_BUS
+
+.align 2
+_fds_read_4092_func_S:
+	CHECK_UPDATE_FDS_ENV
+	//
+	//
+	//
+	mov #0xFFFFFFC0, r1
+	and r1, REG_DATA_BUS
+
+	mov.b @(GBR_OFFS_FDS_MASTER_ENV_LEVEL_1, GBR), r0
+	rts
+	or r0, REG_DATA_BUS
+//
+//
+//
 .align 2
 _mmc5_read_mult_res0_func_S:
 	mov.b @(GBR_OFFS_MMC5_MASTER_MULT_RES + 1, GBR), R0
@@ -822,8 +1254,12 @@ _mmc5_read_status_func_S:
 	mov r0, REG_DATA_BUS
 
 .align 2
-mmc5_pr_spill: .long 0
+_bs5xxx_read_func_S:
+	mov.l @(0x5 * 4, GBR), r0
+	rts
+	mov.b @(r0, REG_ADDR), REG_DATA_BUS
 
+.align 2
 _n163_read_4800_func_S:
 	mov.b @(GBR_OFFS_N163_ADDR, GBR), r0
 	nop
@@ -899,56 +1335,6 @@ s6502_read_shim:
 .align 2
 1: .long _apu_read_4015
 5: .long s_abi_spill_partial_top
-
-.align 4
-_s6502_write_shim_S:
-	//
-	// Save S6502 registers:
-	//
-	mov.l @(s_abi_spill_bottom_addr - gbr_area, GBR), r0
-	mov.l REG_CYC_CNT, @-r0
-
-	mov.l REG_PC_BASE, @-r0
-	mov.l REG_ADDR, @-r0
-
-	sts.l pr, @-r0
-	mov.l REG_DATA_BUS, @-r0
-	//
-	//
-	//
-	mov.l @(sp_save - gbr_area, GBR), r0
-	extu.w REG_ADDR, REG_ADDR
-	//
-	mov.l 1f, r1
-	mov r0, r15
-	//
-	//
-	mov.l @(GBR_OFFS_TIMESTAMP_BASE, GBR), r0
-	extu.b REG_DATA_BUS, REG_DATA_BUS
-
-	jsr @r1
-	add r0, r4
-	//
-	// Restore S6502 registers:
-	//
-	mov.l 5f, r2
-	mova _ram, r0
-
-	lds.l @r2+, SREG_WFAP
-	mov r0, REG_RAM
-
-	lds.l @r2+, SREG_RFAP
-	mov.l @r2+, REG_DATA_BUS
-
-	lds.l @r2+, pr
-	mov.l @r2+, REG_ADDR
-
-	mov.l @r2+, REG_PC_BASE
-	rts
-	mov.l @r2+, REG_CYC_CNT
-.align 2
-1: .long _apu_write
-5: .long s_abi_spill_partial_top
 //
 .align 2
 _nsf_read_frame_pending_S:
@@ -957,29 +1343,6 @@ _nsf_read_frame_pending_S:
 	mov #0, r0
 	rts
 	mov.b r0, @(GBR_OFFS_NSF_FRAME_PENDING, GBR)
-
-.align 2
-_nsf_set_bank_S:
-	extu.b REG_DATA_BUS, r2
-	mov REG_ADDR, r0
-
-	and #0x0F, r0
-	sub r0, r2
-
-	shll8 r2
-	shll2 r2
-
-	shll2 r2
-	mov r0, r1
-
-	mov.l @(GBR_OFFS_NSF_ROM_BASE, GBR), r0
-	add r0, r2
-
-	stc GBR, r0
-	shll2 r1
-
-	rts
-	mov.l r2, @(r0, r1)
 
 .align 2
 _ram_mirror_write_func_S:
@@ -1196,14 +1559,21 @@ _nsf_frame_pending: .byte 0
 .global _exchip_rb_wr
 _exchip_rb_wr: .word 0
 
+.global _nsf_bank_remap_ptr
+_nsf_bank_remap_ptr: .long 0
+
 ASSERT (_nsf_rom_base - gbr_area) == GBR_OFFS_NSF_ROM_BASE
 ASSERT (_nsf_frame_pending - gbr_area) == GBR_OFFS_NSF_FRAME_PENDING
 ASSERT (_exchip_rb_wr - gbr_area) == GBR_OFFS_EXCHIP_RB_WR
+ASSERT (_nsf_bank_remap_ptr - gbr_area) == GBR_OFFS_NSF_BANK_REMAP_PTR
 
+.global _n163_master
+_n163_master:
 _n163_ram_ptr: .long 0
 _n163_addr: .byte 0
 _n163_addr_inc: .byte 0
 
+ASSERT (_n163_master - gbr_area) == GBR_OFFS_N163_MASTER
 ASSERT (_n163_ram_ptr - gbr_area) == GBR_OFFS_N163_RAM_PTR
 ASSERT (_n163_addr - gbr_area) == GBR_OFFS_N163_ADDR
 ASSERT (_n163_addr_inc - gbr_area) == GBR_OFFS_N163_ADDR_INC
@@ -1238,6 +1608,47 @@ ASSERT (_mmc5_master_lc_enable - gbr_area) == GBR_OFFS_MMC5_MASTER_LC_ENABLE
 ASSERT (_mmc5_master_mult0 - gbr_area) == GBR_OFFS_MMC5_MASTER_MULT0
 ASSERT (_mmc5_master_mult1 - gbr_area) == GBR_OFFS_MMC5_MASTER_MULT1
 ASSERT (_mmc5_master_mult_res - gbr_area) == GBR_OFFS_MMC5_MASTER_MULT_RES
+
+.global _fds_master
+_fds_master:
+_fds_master_wtram_ptr: .long 0
+_fds_master_ww_mvol: .byte 0
+
+_fds_master_env_level:
+	.byte 0
+	.byte 0
+
+_fds_master_wt_control:
+	.byte 0
+
+_fds_master_env_pre_divider: .long 0
+_fds_master_env_pre_period: .word 0
+
+_fds_master_env_divider:
+	.byte 0
+	.byte 0
+
+_fds_master_env_period:
+	.byte 0
+	.byte 0
+
+_fds_master_env_control:
+	.byte 0
+	.byte 0
+
+ASSERT (_fds_master - gbr_area) == GBR_OFFS_FDS_MASTER
+ASSERT (_fds_master_wtram_ptr - gbr_area) == GBR_OFFS_FDS_MASTER_WTRAM_PTR
+ASSERT (_fds_master_ww_mvol - gbr_area) == GBR_OFFS_FDS_MASTER_WW_MVOL
+
+ASSERT (_fds_master_env_pre_divider - gbr_area) == GBR_OFFS_FDS_MASTER_ENV_PRE_DIVIDER
+ASSERT (_fds_master_env_pre_period - gbr_area) == GBR_OFFS_FDS_MASTER_ENV_PRE_PERIOD
+
+ASSERT (_fds_master_wt_control - gbr_area) == GBR_OFFS_FDS_MASTER_WT_CONTROL
+
+ASSERT (_fds_master_env_level - gbr_area) == GBR_OFFS_FDS_MASTER_ENV_LEVEL_0
+ASSERT (_fds_master_env_divider - gbr_area) == GBR_OFFS_FDS_MASTER_ENV_DIVIDER_0
+ASSERT (_fds_master_env_period - gbr_area) == GBR_OFFS_FDS_MASTER_ENV_PERIOD_0
+ASSERT (_fds_master_env_control - gbr_area) == GBR_OFFS_FDS_MASTER_ENV_CONTROL_0
 
 .align 2
 s_abi_spill_top_addr: .long s_abi_spill_top
