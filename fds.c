@@ -526,7 +526,7 @@ void fds_slave_entry(uint32 timestamp_scale, volatile uint16* exchip_buffer, uin
 
  memcpy(exchip_resamp, exchip_tables.resamp_div16, sizeof(exchip_tables.resamp_div16));
 
- fds.lpf_coeff = 413013050;
+ fds.lpf_coeff = 456378560;
  //
  //
  fds.env_pre_period = (0xE8 + 1) << 3;
