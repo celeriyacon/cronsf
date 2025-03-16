@@ -572,13 +572,6 @@ static void slave_write(uint16 timestamp, uint8 A, uint8 V)
  exchip_rb_wr += 4;
 }
 
-enum
-{
- SLAVECMD_FORCE_UPDATE = 0xFD,
- SLAVECMD_FRAME = 0xFE,
- SLAVECMD_STOP = 0xFF
-};
-
 LORAM_BSS_UNCACHED volatile int16 nsfcore_slave_ready;
 static LORAM_BSS_UNCACHED volatile int16 run_slave;
 
@@ -941,8 +934,8 @@ void nsfcore_run_frame(void)
   }
   else
   {
-   // Call slave_frame() before apu_frame(), which blocks.
-   slave_frame(timestamp);
+   // Call slave_force_update() before apu_frame(), which blocks.
+   slave_force_update(timestamp);
    //
    //
    if(meta.chip_emulated & CHIP_MASK_MMC5)
@@ -950,6 +943,10 @@ void nsfcore_run_frame(void)
 
    if(meta.chip_emulated & CHIP_MASK_FDS)
     fds_master_frame(timestamp);
+   //
+   //
+   // Call slave_frame() after mmc5_master_frame() and fds_master_frame().
+   slave_frame(timestamp);
    //
    //
    apu_frame(timestamp);

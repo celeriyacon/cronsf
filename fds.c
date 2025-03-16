@@ -25,6 +25,7 @@
 #include "fds.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <assert.h>
 #include <string.h>
 
@@ -55,7 +56,7 @@ typedef struct
 
  int32 env_level[2];
 
- int32 env_pre_divider;
+ uint32 env_pre_divider;
  int16 env_pre_period;	// +1) << 3
 
  int8 env_divider[2];
@@ -86,7 +87,7 @@ typedef struct
  int32 wtx[0x40];
 } fds_t;
 
-static /*__attribute__((section(".fds_reloc")))*/ __attribute__((noinline,noclone)) void fds_run_(fds_t* f, int32 timestamp)
+static __attribute__((section(".fds_reloc"))) __attribute__((noinline,noclone)) void fds_run_(fds_t* f, int32 timestamp)
 {
  f->divider += (uint16)(timestamp - f->prev_timestamp);
  f->prev_timestamp = timestamp;
@@ -98,6 +99,86 @@ static /*__attribute__((section(".fds_reloc")))*/ __attribute__((noinline,noclon
   //
   uint32 av;
 
+#if 1
+  {
+   uint32 tmp0, tmp1, tmp2, tmp3, tmp4;
+
+   asm volatile(
+	".align 2\n\t"
+
+	"mov.l %[f_ph_0], %[tmp0]\n\t"
+	"mov %[f], %[tmp4]\n\t"
+
+	"mov.l %[f_eff_vol], %[tmp1]\n\t"
+	"shlr16 %[tmp0]\n\t"
+
+	"mov.l %[f_ww], %[tmp2]\n\t"
+	"and #0xFC, %[tmp0]\n\t"
+
+	"mov.l %[f_vol_latch], %[tmp3]\n\t"
+	"cmp/eq #0, %[tmp0]\n\t"
+
+	"bf/s 1f\n\t"
+	"add %[wtram_offset_a], %[tmp4]\n\t"
+
+	"mov.l %[tmp1], %[f_vol_latch]\n\t"
+	"mov %[tmp1], %[tmp3]\n\t"
+
+	"1:\n\t"
+	"mov.l %[f_master_volume], %[tmp1]\n\t"
+	"cmp/pl %[tmp2]\n\t"
+
+	"muls.w %[tmp1], %[tmp3]\n\t"	// master_volume * vol_latch
+	"bt/s 2f\n\t"
+
+	"mov.l %[f_sample_latch], %[tmp1]\n\t"	// Delay slot
+	"add %[wtram_offset_b], %[tmp4]\n\t"
+
+	"mov.l @(%[tmp0], %[tmp4]), %[tmp1]\n\t"
+	"nop\n\t"
+
+	"2:\n\t"
+	"mov.l %[tmp1], %[f_sample_latch]\n\t"
+	"sts MACL, %[tmp3]\n\t"			// STALL
+
+	"mul.l %[tmp1], %[tmp3]\n\t"		// sample_latch * (master_volume * vol_latch)
+	"nop\n\t"
+
+	"mov.l %[f_lpf], %[tmp1]\n\t"
+	"nop\n\t"
+
+	"mov.l %[f_lpf_coeff], %[tmp2]\n\t"
+	"sts MACL, %[tmp3]\n\t"			// STALL
+
+	"shlr8 %[tmp3]\n\t"
+	"sub %[tmp1], %[tmp3]\n\t"
+
+	"dmuls.l %[tmp2], %[tmp3]\n\t"
+	"nop\n\t"
+
+	"sts MACH, %[tmp3]\n\t"			// BIG STALL
+	"add %[tmp3], %[tmp1]\n\t"		// STALL
+
+	"mov.l %[tmp1], %[f_lpf]\n\t"
+	"shlr8 %[tmp1]\n\t"
+
+	: [tmp0] "=&z"(tmp0), [tmp1] "=&r"(tmp1), [tmp2] "=&r"(tmp2), [tmp3] "=&r"(tmp3), [tmp4] "=&r"(tmp4)
+	: [f] "r"(f),
+	  [f_ph_0] "m"(f->ph[0]),
+	  [f_vol_latch] "m"(f->vol_latch),
+	  [f_eff_vol] "m"(f->eff_vol),
+	  [f_ww] "m"(f->ww),
+	  [f_sample_latch] "m"(f->sample_latch),
+	  [f_lpf] "m"(f->lpf),
+	  [f_lpf_coeff] "m"(f->lpf_coeff),
+	  [f_master_volume] "m"(f->master_volume),
+	  [wtram_offset_a] "I08"((__builtin_offsetof(fds_t, wtram) > 127) ? 127 : __builtin_offsetof(fds_t, wtram)),
+	  [wtram_offset_b] "I08"(__builtin_offsetof(fds_t, wtram) - ((__builtin_offsetof(fds_t, wtram) > 127) ? 127 : __builtin_offsetof(fds_t, wtram)))
+	: "cc");
+
+   av = tmp1;
+  }
+#else
   {
    uint32 t;
    unsigned wto = (f->ph[0] >> 18) & 0x3F;
@@ -113,6 +194,7 @@ static /*__attribute__((section(".fds_reloc")))*/ __attribute__((noinline,noclon
    f->lpf += (((int32)(t >> 8) - f->lpf) * (int64)f->lpf_coeff) >> 32;
    av = (uint32)f->lpf >> 8;
   }
+#endif
   //
   //
   //
@@ -374,7 +456,7 @@ static INLINE void fds_run(fds_t* f, int32 timestamp)
  fds_run_(f, timestamp);
 }
 
-static INLINE void fds_write(fds_t* f, uint8 addr, uint8 data)
+static INLINE void fds_write(fds_t* f, uint32 timestamp, uint8 addr, uint8 data)
 {
  //printf("%04x %02x\n", addr, data);
 
@@ -474,6 +556,11 @@ static INLINE void fds_write(fds_t* f, uint8 addr, uint8 data)
 
   case 0xA:
 	f->env_pre_period = (data + 1) << 3;
+
+	if(!data)
+	 f->env_pre_divider = (uint32)-1;
+	else
+	 f->env_pre_divider = timestamp + f->env_pre_period;
 	break;
 
  }
@@ -483,6 +570,9 @@ void fds_slave_entry(uint32 timestamp_scale, volatile uint16* exchip_buffer, uin
 {
  fds_t fds = { 0 };
 
+ EXCHIP_RELOC(fds, &fds)
+ //
+ //
  TCR = 0x0;
  TOCR = 0;
 
@@ -569,21 +659,36 @@ void fds_slave_entry(uint32 timestamp_scale, volatile uint16* exchip_buffer, uin
    if(LIKELY(addr < 0xC0))
    {
     //printf("%02x %02x\n", addr, data);
-    fds_write(&fds, addr, data);
+    fds_write(&fds, timestamp, addr, data);
    }
-   else if(addr == 0xFD) // Force-sync
+#if EXCHIP_CONSISTENCY_CHECK
+   else if(addr == 0xC0 || addr == 0xC1)
+   {
+    const unsigned w = (addr & 1);
+    const unsigned el = fds.env_level[w];
+
+    if(data != el)
+    {
+     printf("E%u: M=%02x S=%02x\n", w, data, el);
+     abort();
+    }
+   }
+#endif
+   else if(addr == SLAVECMD_FORCE_UPDATE)
    {
 
    }
-   else if(addr == 0xFE) // Reset timestamp
+   else if(addr == SLAVECMD_FRAME)
    {
     EXCHIP_BENCH_END_FRAME
     //
     //
-    fds.env_pre_divider -= timestamp;
     fds.prev_timestamp -= timestamp;
+
+    if(fds.env_pre_divider != (uint32)-1)    
+     fds.env_pre_divider -= timestamp;
    }
-   else if(addr == 0xFF)	// Exit
+   else if(addr == SLAVECMD_STOP)
     return;
   }
 
@@ -609,31 +714,46 @@ void fds_master_update_counters(uint32 timestamp)
   //
   if(!(f->wt_control & 0x40))
   {
-   for(unsigned i = 0; i < 2; i++)
+   f->env_divider[0]--;
+   if(!f->env_divider[0])
    {
-    f->env_divider[i]--;
-
-    if(!f->env_divider[i])
+    f->env_divider[0] = f->env_period[0];
+    //
+    if(!(f->env_control[0] & 0x80))
     {
-     f->env_divider[i] = f->env_period[i];
-     //
-     if(!(f->env_control[i] & 0x80))
-     {
-      if(f->env_control[i] & 0x40)
-      {
-       if(f->env_level[i] < 0x20)
-        f->env_level[i]++;
-      }
-      else
-      {
-       if(f->env_level[i] > 0x00)
-        f->env_level[i]--;
-      }
-     }
+     if(f->env_control[0] & 0x40)
+      f->env_level[0] += (f->env_level[0] < 0x20);
+     else
+      f->env_level[0] -= (f->env_level[0] > 0x00);
+    }
+   }
+   //
+   //
+   f->env_divider[1]--;
+   if(!f->env_divider[1])
+   {
+    f->env_divider[1] = f->env_period[1];
+    //
+    if(!(f->env_control[1] & 0x80))
+    {
+     if(f->env_control[1] & 0x40)
+      f->env_level[1] += (f->env_level[1] < 0x20);
+     else
+      f->env_level[1] -= (f->env_level[1] > 0x00);
     }
    }
   }
  }
+
+#if EXCHIP_CONSISTENCY_CHECK
+ {
+  *(volatile uint32*)((volatile uint8*)exchip_rb + exchip_rb_wr) = (timestamp << 16) | (0xC0 << 8) | f->env_level[0];
+  exchip_rb_wr += 4;
+
+  *(volatile uint32*)((volatile uint8*)exchip_rb + exchip_rb_wr) = (timestamp << 16) | (0xC1 << 8) | f->env_level[1];
+  exchip_rb_wr += 4;
+ }
+#endif
 }
 
 void fds_master_power(void)
@@ -664,6 +784,7 @@ void fds_master_frame(uint32 timestamp)
  if(timestamp >= fds_master.env_pre_divider)
   fds_master_update_counters(timestamp);
 
- fds_master.env_pre_divider -= timestamp;
+ if(fds_master.env_pre_divider != (uint32)-1)
+  fds_master.env_pre_divider -= timestamp;
 }
 

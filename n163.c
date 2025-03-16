@@ -68,7 +68,7 @@ typedef struct
  n163_channel_t channels[8];
 } n163_t;
 
-static /*__attribute__((section(".n163_reloc")))*/ __attribute__((noinline,noclone)) void n163_run(n163_t* n, int32 timestamp)
+static __attribute__((section(".n163_reloc"))) __attribute__((noinline,noclone)) void n163_run(n163_t* n, int32 timestamp)
 {
  n->divider += (uint16)(timestamp - n->prev_timestamp);
  n->prev_timestamp = timestamp;
@@ -238,35 +238,9 @@ void n163_slave_entry(uint32 timestamp_scale, volatile uint16* exchip_buffer, ui
 {
  n163_t n163 = { 0 };
 
-#if 0
- {
-  extern uint8 sun5b_reloc_dest[];
-  extern uint8 sun5b_reloc_start[];
-  extern uint8 sun5b_reloc_bound[];
-  volatile uint8* s = sun5b_reloc_start;
-  volatile uint8* d = sun5b_reloc_dest;
-  const size_t reloc_size = (sun5b_reloc_bound - sun5b_reloc_start);
-
-  //const size_t total = sizeof(sun5b) + (sun5b_reloc_bound - sun5b_reloc_start)
-  //printf("%08x %08x %08x\n", (unsigned)sun5b_reloc_dest, (unsigned)sun5b_reloc_start, (unsigned)sun5b_reloc_bound);
-  //printf("Total: %zu\n", total);
-  //assert(total <= 1280);
-  uint32 sp;
-  asm volatile("mov r15, %0\n\t" :"=r"(sp));
-
-  //printf("%08x, %08zx\n", sp, reloc_size);
-
-  assert((sp - ((unsigned)sun5b_reloc_dest + reloc_size)) >= 0x160);
-  while(s != sun5b_reloc_bound)
-  {
-   //printf("0x%04x: %02x\n", (unsigned)(s - sun5b_reloc_start), *s);
-   *d = *s;
-   s++;
-   d++;
-  }
- }
-#endif
-
+ EXCHIP_RELOC(n163, &n163)
+ //
+ //
  TCR = 0x0;
  TOCR = 0;
 

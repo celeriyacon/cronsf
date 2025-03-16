@@ -43,6 +43,13 @@ extern exchip_tables_t exchip_tables LORAM_BSS_UNCACHED;
 // Filled with data from resamp_div15 or resamp_div16 in *_slave_entry().
 extern int16 exchip_resamp[256 * 40];
 
+enum
+{
+ SLAVECMD_FORCE_UPDATE = 0xFD,
+ SLAVECMD_FRAME = 0xFE,
+ SLAVECMD_STOP = 0xFF
+};
+
 extern volatile int16 nsfcore_slave_ready;
 
 extern volatile uint32 exchip_rb[16384];
@@ -119,5 +126,30 @@ extern volatile uint32 exchip_bench_rb_wr;
 #else
  #define EXCHIP_SINESWEEP_DO(av) (void)av;
 #endif
+
+#define EXCHIP_RELOC(chip_, objp_)						\
+ {										\
+  extern uint8 chip_##_reloc_dest[];						\
+  extern uint8 chip_##_reloc_start[];						\
+  extern uint8 chip_##_reloc_bound[];						\
+  volatile uint8* s = chip_##_reloc_start;					\
+  volatile uint8* d = chip_##_reloc_dest;					\
+  const size_t reloc_size = (chip_##_reloc_bound - chip_##_reloc_start);	\
+  uint32 sp;									\
+  int32 ss;									\
+  asm volatile("mov r15, %0\n\t" :"=r"(sp):"r"(objp_));				\
+										\
+  ss = (sp - (((unsigned)chip_##_reloc_dest & 0xC0000FFF) + reloc_size));	\
+  /*printf("%08x, %08zx, %08x\n", sp, reloc_size, ss);*/			\
+										\
+  assert(ss >= 0x140);								\
+  while(s != chip_##_reloc_bound)						\
+  {										\
+   *d = *s;									\
+   s++;										\
+   d++;										\
+  }										\
+ }
+
 
 #endif

@@ -104,6 +104,9 @@ rtable:
 	.word test_apu_fds_rel_volume
 	.word test_apu_fds_max_volume
 	.word test_fds_saw
+	.word test_fds_volume_latch
+	.word test_fds_max_host_cpu
+
 rtable_bound:
 ;
 ;
@@ -378,7 +381,78 @@ test_fds_saw:
 ;
 ;
 ;
+test_fds_volume_latch:
+	jsr load_saw
 
+	lda #$80
+	sta $4082
+	lda #$00
+	sta $4083
+
+	lda #$00
+	sta $4089
+
+	lda #$BF
+	sta $4080
+
+	ldx #$00
+tfvll:
+	eor #$38
+	sta $4080
+
+	jsr delay_quick
+
+	inx
+	cpx #$10
+	bne tfvll
+
+	rts
+
+;
+;
+;
+;
+;
+test_fds_max_host_cpu:
+	lda #$80
+	sta $4087
+
+	ldx #$00
+tfmhc_loop:
+	lda #$FF
+	sta $4088
+	inx
+	cpx #$20
+	bne tfmhc_loop
+	;
+	;
+	;
+	lda #$00
+	sta $4085
+
+	lda #$00
+	sta $4089
+
+	lda #$00
+	sta $4082
+	lda #$00
+	sta $4083
+
+	lda #$FF
+	sta $4086
+	lda #$0F
+	sta $4087
+
+	lda #$BF
+	sta $4080
+	sta $4084
+
+	jmp *
+;
+;
+;
+;
+;
 clear_zp:
 	pha
 	txa
@@ -489,6 +563,8 @@ chunk_tlbl:
 .aasc "test_apu_fds_rel_volume", $0
 .aasc "test_apu_fds_max_volume", $0
 .aasc "test_fds_saw", $0
+.aasc "test_fds_volume_latch", $0
+.aasc "test_fds_max_host_cpu", $0
 chunk_tlbl_bound:
 
 .word $0, $0

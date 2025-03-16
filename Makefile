@@ -109,7 +109,7 @@ cronsf.elf:	cronsf.o cronsf_s.o gfx.o fsys.o nsfcore.o apu.o s6502.o vrc6.o sun5
 		$(SH2_CC) $(SH2_CFLAGS) -nostdlib -Xlinker -Tcronsf.ld -o cronsf.elf cronsf.o cronsf_s.o gfx.o fsys.o nsfcore.o apu.o s6502.o vrc6.o sun5b.o n163.o mmc5.o fds.o $(GS_OBJS) $(STDLIB_OBJS) -lgcc
 
 cronsf.bin:	cronsf.elf
-		$(SH2_OBJCOPY) -O binary -j HIRAM -j ".sun5b_reloc" cronsf.elf cronsf.bin
+		$(SH2_OBJCOPY) -O binary -j HIRAM -j ".sun5b_reloc" -j ".fds_reloc" -j ".n163_reloc" cronsf.elf cronsf.bin
 
 nsfs/Tests/testapu.nsfe:	testapu.asm
 		xa -C -o nsfs/Tests/testapu.nsfe testapu.asm

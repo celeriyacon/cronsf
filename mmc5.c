@@ -25,6 +25,7 @@
 #include "mmc5.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "exchip_lut.h"
 
@@ -380,6 +381,22 @@ void mmc5_slave_entry(uint32 timestamp_scale, volatile uint16* exchip_buffer, ui
 	break;
     //
     //
+#if EXCHIP_CONSISTENCY_CHECK
+    case 0xC0:
+    case 0xC1:
+	{
+	 const unsigned w = (addr & 1);
+	 const unsigned lc = mmc5.length_counter[w];
+
+         if(data != lc)
+         {
+          printf("LC%u: M=%02x S=%02x\n", w, data, lc);
+          abort();
+         }
+        }
+	break;
+#endif
+
     case 0xFD: // Force-sync
 	break;
 
@@ -432,6 +449,16 @@ void mmc5_master_update_counters(uint32 timestamp)
   mmc5_master.frame_divider += 7457 + mmc5_master_alt;
   mmc5_master_alt = !mmc5_master_alt;
  }
+
+#if EXCHIP_CONSISTENCY_CHECK
+ {
+  *(volatile uint32*)((volatile uint8*)exchip_rb + exchip_rb_wr) = (timestamp << 16) | (0xC0 << 8) | mmc5_master.length_counter0;
+  exchip_rb_wr += 4;
+
+  *(volatile uint32*)((volatile uint8*)exchip_rb + exchip_rb_wr) = (timestamp << 16) | (0xC1 << 8) | mmc5_master.length_counter1;
+  exchip_rb_wr += 4;
+ }
+#endif
 }
 
 void mmc5_master_power(void)

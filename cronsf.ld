@@ -22,7 +22,17 @@ SECTIONS
  _sun5b_reloc_start = LOADADDR(.sun5b_reloc);
  _sun5b_reloc_bound = LOADADDR(.sun5b_reloc) + SIZEOF(.sun5b_reloc);
 
- HIRAM_BSS (ADDR(HIRAM) + SIZEOF(HIRAM) + SIZEOF(.sun5b_reloc)) (NOLOAD) : { bss_start = .; *(.bss*) bss_bound = .;} >hiram
+ .fds_reloc 0xC0001000	: AT(LOADADDR(HIRAM)+SIZEOF(HIRAM)+SIZEOF(.sun5b_reloc)) { *(.fds_reloc) }
+ _fds_reloc_dest = ADDR(.fds_reloc);
+ _fds_reloc_start = LOADADDR(.fds_reloc);
+ _fds_reloc_bound = LOADADDR(.fds_reloc) + SIZEOF(.fds_reloc);
+
+ .n163_reloc 0xC0002000	: AT(LOADADDR(HIRAM)+SIZEOF(HIRAM)+SIZEOF(.sun5b_reloc)+SIZEOF(.fds_reloc)) { *(.n163_reloc) }
+ _n163_reloc_dest = ADDR(.n163_reloc);
+ _n163_reloc_start = LOADADDR(.n163_reloc);
+ _n163_reloc_bound = LOADADDR(.n163_reloc) + SIZEOF(.n163_reloc);
+
+ HIRAM_BSS (ADDR(HIRAM) + SIZEOF(HIRAM) + SIZEOF(.sun5b_reloc) + SIZEOF(.fds_reloc) + SIZEOF(.n163_reloc)) (NOLOAD) : { bss_start = .; *(.bss*) bss_bound = .;} >hiram
  HIRAM_BSS_UNCACHED (NOLOAD)	: { *(.hiram.bss.uncached) } >hiram_uncached
 
  LORAM_BSS (NOLOAD)		: { *(.loram.bss) } >loram

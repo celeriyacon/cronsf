@@ -923,14 +923,15 @@ fds_update_shim:
 6: .long _ram
 
 
+// At 40294:, r2=timestamp
 .macro CHECK_UPDATE_FDS_ENV
 	mov.l @(GBR_OFFS_TIMESTAMP_BASE, GBR), r0
-	mov REG_CYC_CNT, r3
+	mov REG_CYC_CNT, r2
 
-	add r0, r3
+	add r0, r2
 	mov.l @(GBR_OFFS_FDS_MASTER_ENV_PRE_DIVIDER, GBR), r0
 
-	cmp/ge r0, r3
+	cmp/hs r0, r2
 	bf/s 40294f
 	//
 	//
@@ -1030,13 +1031,25 @@ _fds_write_408A_func_S:
 	//
 	//
 	extu.b REG_DATA_BUS, r0
+	cmp/pl r0
+
+	bf/s 1f
 	add #1, r0
 
 	shll2 r0
 	shll r0
 
-	bra _fds_write_X_func_S
 	mov.w r0, @(GBR_OFFS_FDS_MASTER_ENV_PRE_PERIOD, GBR)
+	add r2, r0	// r2=timestamp, from CHECK_UPDATE_FDS_ENV
+
+	bra _fds_write_X_func_S
+	mov.l r0, @(GBR_OFFS_FDS_MASTER_ENV_PRE_DIVIDER, GBR)
+	//
+	//
+	1:
+	mov #-1, r0
+	bra _fds_write_X_func_S
+	mov.l r0, @(GBR_OFFS_FDS_MASTER_ENV_PRE_DIVIDER, GBR)
 
 //
 .align 2

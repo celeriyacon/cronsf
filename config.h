@@ -36,7 +36,17 @@
 
 
 //
-// Define to 1 to enable a pre-resampler sine sweep in the Namco 163 and
-// Sunsoft 5B code.
+// Define to 1 to enable a pre-resampler sine sweep in the Namco 163,
+// Sunsoft 5B, and FDS code.
 //
 // #define EXCHIP_SINESWEEP 1
+
+//
+// Define to 1 to enable consistency checks for master CPU sound chip
+// emulation vs slave CPU sound chip emulation.  Currently only affects
+// FDS and MMC5 emulation.
+//
+// Don't enable this unless you know what you're doing,
+//
+// #define EXCHIP_CONSISTENCY_CHECK 1
+

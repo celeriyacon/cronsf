@@ -312,7 +312,7 @@ typedef struct
 
  int8 wt_control;
 
- int32 env_pre_divider;
+ uint32 env_pre_divider;
  int16 env_pre_period;	// +1) << 3
 
  int8 env_divider[2];
