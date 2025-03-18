@@ -78,8 +78,9 @@ static __attribute__((section(".n163_reloc"))) __attribute__((noinline,noclone))
   n->divider -= 15;
   //
   //
-  n163_channel_t* ch = &n->channels[n->ch_counter];
   uint32 av;
+#if !EXCHIP_SINESWEEP
+  n163_channel_t* ch = &n->channels[n->ch_counter];
 
   av = n->wf[(ch->ph + ch->wf_offs) >> 24] * (int16)ch->volume;
 
@@ -90,6 +91,7 @@ static __attribute__((section(".n163_reloc"))) __attribute__((noinline,noclone))
   n->ch_counter++;
   if(n->ch_counter >= n->ch_limit)
    n->ch_counter = 0;
+#endif
   //
   //
   EXCHIP_SINESWEEP_DO(av)
@@ -248,6 +250,10 @@ void n163_slave_entry(uint32 timestamp_scale, volatile uint16* exchip_buffer, ui
 
  //n163.output_volume = (21903 * /*ref_volume*/4); // >> 16; // * 1; //-8192; //-19168;
  n163.output_volume = (((uint64)ref_volume * 65536) / (64 * 15 * 15));
+
+#if EXCHIP_SINESWEEP
+ n163.output_volume = 65536;
+#endif
 
  n163.resamp_scale = (15 * timestamp_scale);
  n163.scsp_ptr = exchip_buffer;

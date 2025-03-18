@@ -2250,6 +2250,10 @@ void apu_init(bool pal, uint32 apu_volume)
 
  assert(apu_volume <= 65536);
 
+#if EXCHIP_SINESWEEP
+ apu_volume = 0;
+#endif
+
  COEF[CRA_APU_VOLUME] = DSP_MAKE_COEF(-((((4096 * apu_volume) >> 15) + 1) >> 1));
 
  stuff.fifo_offset = 0x2000 / 2;

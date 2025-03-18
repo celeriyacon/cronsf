@@ -96,6 +96,7 @@ static __attribute__((section(".sun5b_reloc"))) __attribute__((noinline,noclone)
  {
   uint32 av;
   uint32 status_save;
+#if !EXCHIP_SINESWEEP
   {
    uint32 tmp0, tmp1, tmp2;
 
@@ -139,6 +140,7 @@ static __attribute__((section(".sun5b_reloc"))) __attribute__((noinline,noclone)
 	  [lut_offset] "I08"(((unsigned)s->lut - (unsigned)s) >> 2)
 	: "r0", "cc");
   }
+#endif
 
   EXCHIP_SINESWEEP_DO(av)
 
@@ -293,6 +295,7 @@ static __attribute__((section(".sun5b_reloc"))) __attribute__((noinline,noclone)
 	//
 	//
 	"skip_resample:\n\t"
+#if !EXCHIP_SINESWEEP
 	//
 	//
 	//
@@ -385,6 +388,7 @@ static __attribute__((section(".sun5b_reloc"))) __attribute__((noinline,noclone)
 	"skip_noise_update:\n\t"
 	"mov.l %[tmp2], %[s_noise_divider]\n\t"
 	"mov.l r0, %[s_status]\n\t"		// STALL
+#endif
 	//
 	//
 	//
@@ -426,6 +430,7 @@ static __attribute__((section(".sun5b_reloc"))) __attribute__((noinline,noclone)
   //
   //
   //
+#if !EXCHIP_SINESWEEP
   s->env.divider++;
   if(LIKELY(s->env.divider >= s->env.period))
   {
@@ -445,6 +450,7 @@ static __attribute__((section(".sun5b_reloc"))) __attribute__((noinline,noclone)
     s->volumes[3] = s->db_lut[s->env.level];
    }
   }
+#endif
  }
 }
 

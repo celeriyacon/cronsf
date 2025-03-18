@@ -99,13 +99,6 @@ HIRAM_BSS_UNCACHED volatile uint32 exchip_bench_rb_wr;
 static uint32 exchip_bench_rb_rd;
 #endif
 
-#if EXCHIP_SINESWEEP
-const int16 exchip_sintab[4096] =
-{
- #include "sin.h"
-};
-#endif
-
 VDP2_BSS static nsf_meta_t meta;
 VDP2_BSS static char error_message[128];
 

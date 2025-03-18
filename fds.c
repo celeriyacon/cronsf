@@ -31,19 +31,19 @@
 
 typedef struct
 {
- int32 divider;
+ int16 divider;
+ int8 wt_control;
+ int8 mod_control;
 
  uint32 ph[2];
- uint32 ph_inc[2];
+ uint32 ph_inc;
+ uint32 eff_mod_ph_inc;
 
  uint32 mod_counter;
 
  int32 master_volume;
 
  int32 ww;
-
- int32 wt_control;
- int32 mod_control;
 
  int32 lpf;
  int32 lpf_coeff;
@@ -56,6 +56,8 @@ typedef struct
 
  int32 env_level[2];
 
+ int32 prev_timestamp;
+
  uint32 env_pre_divider;
  int16 env_pre_period;	// +1) << 3
 
@@ -64,7 +66,6 @@ typedef struct
  int8 env_control[2];
  //
  //
- int32 prev_timestamp;
  uint32 rb_rd;
  //
  uint32 resamp_divider;
@@ -80,6 +81,8 @@ typedef struct
  uint32 buf_offs;
 
  volatile uint16* scsp_ptr;
+
+ uint32 mod_ph_inc;
 
  int8 modram[0x20];
  int32 wtram[0x40];
@@ -99,6 +102,7 @@ static __attribute__((section(".fds_reloc"))) __attribute__((noinline,noclone)) 
   //
   uint32 av;
 
+#if !EXCHIP_SINESWEEP
 #if 1
   {
    uint32 tmp0, tmp1, tmp2, tmp3, tmp4;
@@ -174,7 +178,7 @@ static __attribute__((section(".fds_reloc"))) __attribute__((noinline,noclone)) 
 	  [f_master_volume] "m"(f->master_volume),
 	  [wtram_offset_a] "I08"((__builtin_offsetof(fds_t, wtram) > 127) ? 127 : __builtin_offsetof(fds_t, wtram)),
 	  [wtram_offset_b] "I08"(__builtin_offsetof(fds_t, wtram) - ((__builtin_offsetof(fds_t, wtram) > 127) ? 127 : __builtin_offsetof(fds_t, wtram)))
-	: "cc");
+	: "macl", "mach", "cc");
 
    av = tmp1;
   }
@@ -195,6 +199,7 @@ static __attribute__((section(".fds_reloc"))) __attribute__((noinline,noclone)) 
    av = (uint32)f->lpf >> 8;
   }
 #endif
+#endif
   //
   //
   //
@@ -205,20 +210,19 @@ static __attribute__((section(".fds_reloc"))) __attribute__((noinline,noclone)) 
   //
   //
   {
-   uint32 tmp0, tmp1 = (uint32)exchip_resamp, tmp2, tmp3;
+   uint32 tmp0, tmp1, tmp2, tmp3, tmp4;
    uint32 resamp_scale_tmp;
-   uint32 s_buf = (uint32)f->buf + 128;
 
    asm volatile(
 	".align 2\n\t"
 
 	"mov.l %[s_buf_offs], r0\n\t"
-	"nop\n\t"
+	"mov %[buf], %[tmp4]\n\t"
 
-	"mov.w %[av], @(r0, %[s_buf])\n\t"
-	"add #-128, %[s_buf]\n\t"
+	"mov.w %[av], @(r0, %[tmp4])\n\t"
+	"add #-128, %[tmp4]\n\t"
 
-	"mov.w %[av], @(r0, %[s_buf])\n\t"
+	"mov.w %[av], @(r0, %[tmp4])\n\t"
 	"add #2, r0\n\t"
 
 	"mov.l %[resamp_divider], %[tmp0]\n\t"
@@ -234,7 +238,7 @@ static __attribute__((section(".fds_reloc"))) __attribute__((noinline,noclone)) 
 	"cmp/hi %[tmp0], %[tmp2]\n\t"
 
 	"bf/s skip_resample\n\t"
-	"nop\n\t"
+	"mov %[exchip_resamp], %[tmp1]\n\t"
 	//
 	//
 	//
@@ -262,7 +266,7 @@ static __attribute__((section(".fds_reloc"))) __attribute__((noinline,noclone)) 
 	"mov r0, %[tmp0]\n\t"
 
 	"mov.l %[scsp_ptr], %[tmp3]\n\t"
-	"add %[s_buf], %[tmp0]\n\t"
+	"add %[tmp4], %[tmp0]\n\t"
 
 	// tmp0: waveform
 	// tmp1: impulse
@@ -359,8 +363,10 @@ static __attribute__((section(".fds_reloc"))) __attribute__((noinline,noclone)) 
 	//
 	//
 	//
-	: [tmp0] "=&r"(tmp0), [tmp1] "+&r"(tmp1) /*[tmp1] "=&r"(tmp1)*/, [tmp2] "=&r"(tmp2), [tmp3] "=&r"(tmp3), [resamp_scale] "=&r"(resamp_scale_tmp), [s_buf] "+&r"(s_buf)
+	: [tmp0] "=&r"(tmp0), [tmp1] "=&r"(tmp1), [tmp2] "=&r"(tmp2), [tmp3] "=&r"(tmp3), [tmp4] "=&r"(tmp4), [resamp_scale] "=&r"(resamp_scale_tmp)
 	: [av] "r"(av),
+	  [exchip_resamp] "r"(exchip_resamp),
+	  [buf] "r"((uint32)f->buf + 128),
 	  [s_buf_offs] "m"(f->buf_offs),
 	  [resamp_divider] "m"(f->resamp_divider),
 	  [s_resamp_scale] "m"(f->resamp_scale),
@@ -378,6 +384,109 @@ static __attribute__((section(".fds_reloc"))) __attribute__((noinline,noclone)) 
   //
   //
   //
+#if !EXCHIP_SINESWEEP
+#if 1
+  {
+   uint32 tmp0, tmp1, tmp2, tmp3, tmp4;
+
+   asm volatile(
+	"mov.l %[f_mod_counter], %[tmp1]\n\t"
+	"mov #0x10, %[tmp4]\n\t"
+
+	"mov.l %[f_env_level_1], %[tmp2]\n\t"
+	"add #-0x40, %[tmp1]\n\t"
+
+	"muls.w %[tmp1], %[tmp2]\n\t"
+	"shll16 %[tmp4]\n\t"
+
+	"mov.b %[f_wt_control], %[tmp0]\n\t"
+	"add #-1, %[tmp4]\n\t"
+
+	"mov.l %[f_ph_inc_0], %[tmp3]\n\t"
+	"tst #0x80, %[tmp0]\n\t"
+
+	"sts MACL, %[tmp0]\n\t"
+	"bf/s 1f\n\t"
+
+	"tst #0x0F, %[tmp0]\n\t"	// Delay slot
+	"shlr2 %[tmp0]\n\t"
+
+	"bt/s 2f\n\t"
+	"shlr2 %[tmp0]\n\t"		// Delay slot
+
+	"tst #0x80, %[tmp0]\n\t"
+	"bf/s 2f\n\t"
+
+	"nop\n\t"	// Delay slot
+	"add #0x02, %[tmp0]\n\t"
+
+	"2:\n\t"
+	"add #0x40, %[tmp0]\n\t"
+	"and #0xFF, %[tmp0]\n\t"
+
+	"muls.w %[tmp3], %[tmp0]\n\t"
+	"nop\n\t"
+
+	"mov.l %[f_ph_0], %[tmp2]\n\t"
+	"nop\n\t"
+
+	"sts MACL, %[tmp3]\n\t"
+	"nop\n\t"
+
+	"mov.l %[f_ph_inc_1], %[tmp0]\n\t"
+	"and %[tmp4], %[tmp3]\n\t"
+
+	"mov.l %[f_ph_1], %[tmp4]\n\t"
+	"add %[tmp3], %[tmp2]\n\t"
+
+	"mov.l %[tmp2], %[f_ph_0]\n\t"
+	"mov %[tmp4], %[tmp2]\n\t"
+	//
+	//
+	//
+	"add %[tmp4], %[tmp0]\n\t"
+	"xor %[tmp0], %[tmp2]\n\t"
+
+	"mov.l %[tmp0], %[f_ph_1]\n\t"
+	"exts.w %[tmp2], %[tmp2]\n\t"
+
+	"cmp/pz %[tmp2]\n\t"
+	"bt/s 1f\n\t"
+
+	"swap.w %[tmp4], %[tmp0]\n\t"	// Delay slot
+	"and #0x1F, %[tmp0]\n\t"
+
+	"mov.b @(%[tmp0], %[modram]), %[tmp0]\n\t"
+	"add #0x40, %[tmp1]\n\t"
+
+	"cmp/pz %[tmp0]\n\t"
+	"add %[tmp1], %[tmp0]\n\t"
+
+	"bt/s 3f\n\t"
+	"and #0x7F, %[tmp0]\n\t"		// Delay slot
+
+	"mov #0x40, %[tmp0]\n\t"
+	"3: mov.l %[tmp0], %[f_mod_counter]\n\t"
+	//
+	//
+	"1:\n\t"
+/*
+*/
+
+	: [tmp0] "=&z"(tmp0), [tmp1] "=&r"(tmp1), [tmp2] "=&r"(tmp2), [tmp3] "=&r"(tmp3), [tmp4] "=&r"(tmp4)
+	: [f] "r"(f),
+	  [f_wt_control] "m"(f->wt_control),
+	  [f_mod_counter] "m"(f->mod_counter),
+	  [f_env_level_1] "m"(f->env_level[1]),
+	  [f_ph_inc_0] "m"(f->ph_inc),
+	  [f_ph_0] "m"(f->ph[0]),
+	  [f_mod_control] "m"(f->mod_control),
+	  [f_ph_1] "m"(f->ph[1]),
+	  [f_ph_inc_1] "m"(f->eff_mod_ph_inc),
+	  [modram] "r"(f->modram)
+	: "cc");
+  }
+#else
   if(!(f->wt_control & 0x80))
   {
    {
@@ -390,16 +499,16 @@ static __attribute__((section(".fds_reloc"))) __attribute__((noinline,noclone)) 
      tphi += r;
 
     tphi = (tphi + 0x40) & 0xFF;
-    tphi = (f->ph_inc[0] * tphi) & 0xFFFFF;
+    tphi = (f->ph_inc * tphi) & 0xFFFFF;
 
     f->ph[0] += tphi;
    }
 
-   if(!(f->mod_control & 0x80))
+   //if(!(f->mod_control & 0x80))
    {
     const uint32 prev_mph = f->ph[1];
 
-    f->ph[1] += f->ph_inc[1];
+    f->ph[1] += f->eff_mod_ph_inc; //f->ph_inc[1];
     if((prev_mph ^ f->ph[1]) & 0x8000)
     {
      int8 m = f->modram[(prev_mph >> 16) & 0x1F];
@@ -410,6 +519,8 @@ static __attribute__((section(".fds_reloc"))) __attribute__((noinline,noclone)) 
     }
    }
   }
+#endif
+#endif
  }
 }
 
@@ -487,15 +598,15 @@ static INLINE void fds_write(fds_t* f, uint32 timestamp, uint8 addr, uint8 data)
 	break;
 
   case 0x2:
-	f->ph_inc[0] &= 0xFF00;
-	f->ph_inc[0] |= data;
+	f->ph_inc &= 0xFF00;
+	f->ph_inc |= data;
 	break;
 
   case 0x3:
 	//printf("wtc: %02x\n", data);
 
-	f->ph_inc[0] &= 0x00FF;
-	f->ph_inc[0] |= (data & 0xF) << 8;
+	f->ph_inc &= 0x00FF;
+	f->ph_inc |= (data & 0xF) << 8;
 
 	f->wt_control = data & 0xC0;
 	if(f->wt_control & 0x80)
@@ -524,18 +635,22 @@ static INLINE void fds_write(fds_t* f, uint32 timestamp, uint8 addr, uint8 data)
 	break;
 
   case 0x6:
-	f->ph_inc[1] &= 0xFF00 << 3;
-	f->ph_inc[1] |= data << 3;
+	f->mod_ph_inc &= 0xFF00;
+	f->mod_ph_inc |= data;
+
+	f->eff_mod_ph_inc = ((f->mod_control & 0x80) ? 0 : (f->mod_ph_inc << 3));
 	break;
 
   case 0x7:
-	f->ph_inc[1] &= 0x00FF << 3;
-	f->ph_inc[1] |= ((data & 0xF) << 8) << 3;
+	f->mod_ph_inc &= 0x00FF;
+	f->mod_ph_inc |= (data & 0xF) << 8;
 
 	f->mod_control = data & 0xC0;
 	if(f->mod_control & 0x80)
 	 f->ph[1] &= ~0xFFFF;
-
+	//
+	//
+	f->eff_mod_ph_inc = ((f->mod_control & 0x80) ? 0 : (f->mod_ph_inc << 3));
 	break;
 
   case 0x8:

@@ -36,6 +36,7 @@ typedef struct
  uint16 samples[715202 / 2];
  int16 resamp_n163[256 * 40];
  int16 resamp_div16[256 * 40];
+ int16 sine_half[4096 / 2];
 } exchip_tables_t;
 
 extern exchip_tables_t exchip_tables LORAM_BSS_UNCACHED;
@@ -106,17 +107,23 @@ extern volatile uint32 exchip_bench_rb_wr;
 #endif
 
 #if EXCHIP_SINESWEEP
- extern const int16 exchip_sintab[4096];
-
  #define EXCHIP_SINESWEEP_DO(av)			\
  {							\
-  static uint32 ph = 0;				\
+  static uint32 ph = 0;					\
   static uint32 ph_inc = 0;				\
   static uint32 ph_inc_inc = 1024;			\
+  const unsigned idx_a = ph >> (32 - 12);		\
+  const unsigned idx_b = (idx_a + 1) & 4095;		\
   int32 a, b;						\
 							\
-  a = exchip_sintab[  ph >> (32 - 12)];			\
-  b = exchip_sintab[((ph >> (32 - 12)) + 1) & 4095];	\
+  a = exchip_tables.sine_half[idx_a & 2047];		\
+  b = exchip_tables.sine_half[idx_b & 2047];		\
+							\
+  if(idx_a & 2048)					\
+   a = -a;						\
+							\
+  if(idx_b & 2048)					\
+   b = -b;						\
 							\
   av = a + (((b - a) * ((ph >> 12) & 0xFF)) >> 8);	\
 							\

@@ -1126,6 +1126,15 @@ static void exchip(void)
   }
  }
 
+ {
+  for(unsigned i = 0; i < 2048; i++)
+  {
+   double v = floor(0.5 + 28672 * sin(i * M_PI * 2 / 4096));
+
+   data[offs++] = (int16)v;
+  }
+ }
+
  //assert(offs <= 524288);
  //
  //

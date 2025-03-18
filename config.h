@@ -37,7 +37,7 @@
 
 //
 // Define to 1 to enable a pre-resampler sine sweep in the Namco 163,
-// Sunsoft 5B, and FDS code.
+// Sunsoft 5B, and FDS code, and silence base APU output.
 //
 // #define EXCHIP_SINESWEEP 1
 
