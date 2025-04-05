@@ -313,18 +313,18 @@ void n163_slave_entry(uint32 timestamp_scale, volatile uint16* exchip_buffer, ui
     //printf("%02x %02x\n", addr, data);
     n163_write(&n163, addr, data);
    }
-   else if(addr == 0xFD) // Force-sync
+   else if(addr == SLAVECMD_FORCE_UPDATE)
    {
 
    }
-   else if(addr == 0xFE) // Reset timestamp
+   else if(addr == SLAVECMD_FRAME)
    {
     EXCHIP_BENCH_END_FRAME
     //
     //
     n163.prev_timestamp -= timestamp;
    }
-   else if(addr == 0xFF)	// Exit
+   else if(addr == SLAVECMD_STOP)
     return;
   }
 

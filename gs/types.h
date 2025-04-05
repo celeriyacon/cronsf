@@ -29,6 +29,7 @@
 #include <stdbool.h>
 
 #define INLINE inline	__attribute__((always_inline))
+#define NO_INLINE	__attribute__((noinline))
 
 #define UNLIKELY(v)	__builtin_expect((v) != 0, 0)
 #define LIKELY(v)	__builtin_expect((v) != 0, 1)

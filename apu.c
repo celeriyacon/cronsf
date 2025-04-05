@@ -2027,19 +2027,6 @@ void apu_preinit(void)
  //
 
 #if (APU_DEBUG)
-/*
-    9: (value slot for DSP MIXS input)
-       (((((9) * 2 - 9) % 64) * 16) / 16 * 2)+3 = 21
-
-   11: Pulse 0-A waveform
-   12: Pulse 0-B waveform
-   13: Pulse 1-A waveform
-   14: Pulse 1-B waveform
-
-   15: Noise waveform
-
-   16: Triangle waveform
-*/
  {
   int pulse0_addr_i = -1;
   int pulse1_addr_i = -1;

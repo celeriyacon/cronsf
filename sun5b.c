@@ -686,18 +686,18 @@ void sun5b_slave_entry(uint32 timestamp_scale, volatile uint16* exchip_buffer, u
    //
    if(LIKELY(addr < 0x10))
     sun5b_write(&sun5b, addr, data);
-   else if(addr == 0xFD) // Force-sync
+   else if(addr == SLAVECMD_FORCE_UPDATE)
    {
 
    }
-   else if(addr == 0xFE) // Reset timestamp
+   else if(addr == SLAVECMD_FRAME)
    {
     EXCHIP_BENCH_END_FRAME
     //
     //
     sun5b.prev_timestamp -= timestamp;
    }
-   else if(addr == 0xFF)	// Exit
+   else if(addr == SLAVECMD_STOP)
     return;
   }
 

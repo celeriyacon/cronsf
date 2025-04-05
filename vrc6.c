@@ -573,10 +573,10 @@ void vrc6_slave_entry(uint32 timestamp_scale, volatile uint16* exchip_buffer, ui
 	break;
     //
     //
-    case 0xFD: // Force-sync
+    case SLAVECMD_FORCE_UPDATE:
 	break;
 
-    case 0xFE: // Reset timestamp
+    case SLAVECMD_FRAME:
 	EXCHIP_BENCH_END_FRAME
 
 	{
@@ -590,7 +590,7 @@ void vrc6_slave_entry(uint32 timestamp_scale, volatile uint16* exchip_buffer, ui
 	}
 	break;
 
-    case 0xFF: // Exit
+    case SLAVECMD_STOP:
 	return;
    }
   }
