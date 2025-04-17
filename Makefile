@@ -74,6 +74,8 @@ gs/%.o:		gs/%.c gs/*.h
 		$(SH2_CC) $(SH2_CFLAGS) -o $*_s.o -c $*_s.S
 #
 #
+CRONSF_OBJS=	cronsf.o cronsf_s.o gfx.o fsys.o nsfcore.o apu.o s6502.o vrc6.o sun5b.o n163.o mmc5.o fds.o
+
 s6502.o:	s6502.S s6502.h
 		$(SH2_CC) $(SH2_CFLAGS) -Wa,--fatal-warnings -o s6502.o -c s6502.S
 
@@ -105,8 +107,8 @@ sysarea.bin:	sys_ipl.bin sys_id.bin sys_sec.bin
 cronsf.o:	cronsf.c config.h version.h gfx.h fsys.h nsfcore.h gs/*.h
 		$(SH2_CC) $(SH2_CFLAGS) -o cronsf.o -c cronsf.c
 
-cronsf.elf:	cronsf.o cronsf_s.o gfx.o fsys.o nsfcore.o apu.o s6502.o vrc6.o sun5b.o n163.o mmc5.o fds.o cronsf.ld $(GS_OBJS) $(STDLIB_OBJS)
-		$(SH2_CC) $(SH2_CFLAGS) -nostdlib -Xlinker -Tcronsf.ld -o cronsf.elf cronsf.o cronsf_s.o gfx.o fsys.o nsfcore.o apu.o s6502.o vrc6.o sun5b.o n163.o mmc5.o fds.o $(GS_OBJS) $(STDLIB_OBJS) -lgcc
+cronsf.elf:	$(CRONSF_OBJS) cronsf.ld $(GS_OBJS) $(STDLIB_OBJS)
+		$(SH2_CC) $(SH2_CFLAGS) -nostdlib -Xlinker -Tcronsf.ld -o cronsf.elf $(CRONSF_OBJS) $(GS_OBJS) $(STDLIB_OBJS) -lgcc
 
 cronsf.bin:	cronsf.elf
 		$(SH2_OBJCOPY) -O binary -j HIRAM -j ".sun5b_reloc" -j ".fds_reloc" -j ".n163_reloc" cronsf.elf cronsf.bin
@@ -168,4 +170,4 @@ test_dsp.iso:	Makefile sysarea.bin font.bin test_dsp.bin
 #
 .PHONY:		clean
 clean:
-		rm --force --one-file-system -- bintoinc gentables scspntsc.bin scsppal.bin exchip.bin exchip_lut.h madrs.h madrs_pal.h cronsf.elf cronsf.bin cronsf.o fsys.o gfx.o nsfcore.o apu.o s6502.o s6502_s.o vrc6.o sun5b.o cronsf.ss cronsf-track1.iso cronsf-track2-nsfs.iso init68k.elf init68k.bin init68k.bin.h shim_6502.o shim_6502.bin shim_6502.bin.h test_stdlib.o test_stdlib.bin test_stdlib.elf test_stdlib.iso test_dsp.elf test_dsp.ss $(STDLIB_OBJS) $(GS_OBJS)
+		rm --force --one-file-system -- bintoinc gentables scspntsc.bin scsppal.bin exchip.bin exchip_lut.h madrs.h madrs_pal.h cronsf.elf cronsf.bin $(CRONSF_OBJS) cronsf.ss cronsf-track1.iso cronsf-track2-nsfs.iso init68k.elf init68k.bin init68k.bin.h shim_6502.o shim_6502.bin shim_6502.bin.h test_stdlib.o test_stdlib.bin test_stdlib.elf test_stdlib.iso test_dsp.elf test_dsp.bin test_dsp.ss sysarea.bin sys_ipl.elf sys_ipl.bin $(STDLIB_OBJS) $(GS_OBJS)
