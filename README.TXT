@@ -2,8 +2,8 @@ CroNSF is a basic NSF player for the Sega Saturn.
 
 Due to heavy reliance on SCSP functionality, including the SCSP DSP, CroNSF
 will not work properly on emulators with grossly-inaccurate SCSP emulation;
-run CroNSF on real hardware, Mednafen, or a recent version of srg320's
-MiSTer Saturn core.
+run CroNSF on original Saturn hardware(with a modchip or ODE),
+srg320's MiSTer Saturn core, or Mednafen.
 
 NSFs that require more than one expansion chip are not supported.  Emulation
 of NSFs that use expansion chips is far more susceptible to running out of
@@ -95,12 +95,13 @@ a single-track bootable ISO-9660 CD image.
 
 --------------------------------------------------------------------------------
 
-Building CroNSF requires cross-compiling GNU toolchains targeting the SH-2
-and M68K, the 6502 cross-assembler "xa", and the ISO-9660 filesystem
-generator "xorriso".
+Building CroNSF requires cross-compiling GNU toolchains targeting the M68K and
+SH-2(preferably with gcc 4.9.4), the 6502 cross-assembler "xa", and
+the ISO-9660 filesystem generator "xorriso".
 
 NSFs should be placed in the "nsfs" subdirectory before building, so
-that they will be included in the generated track 2 ISO image.
+that they will be included in the generated track 2 ISO image and bootable
+ROM cart image.
 
 The included "stdlib" ideally shouldn't be used in other projects,
 as it is incomplete by design and probably buggy.
